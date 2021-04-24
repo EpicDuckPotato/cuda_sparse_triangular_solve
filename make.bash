@@ -1,2 +1,2 @@
 #!/bin/bash
-g++ -o lt_solve.o src/*.c src/*.cpp -I"include"
+g++ -w -o lt_solve.o src/*.c src/*.cpp -I"include"

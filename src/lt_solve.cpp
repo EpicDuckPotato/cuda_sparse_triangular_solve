@@ -49,6 +49,8 @@ int main (int argc, char *argv[])
   for (int i = 0; i < T.nz; i++)
   {
     fscanf(fp, "%d %d %lg\n", &(T.i[i]), &(T.p[i]), &(T.x[i]));
+    --T.i[i];
+    --T.p[i];
   }
   cs *A = cs_triplet(&T);
   cout << "Converted LHS to CSC" << endl;
