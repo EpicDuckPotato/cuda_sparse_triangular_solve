@@ -69,12 +69,10 @@ int main (int argc, char *argv[])
 
   // Read RHS vector (b) into x
   double *x = (double*)malloc(sizeof(double)*(A->m));
-  if ((fp = fopen(argv[2], "r")) == NULL) 
+  if ((fp = fopen(RHS_file, "r")) == NULL) 
     exit(1);
-  if (mm_read_banner(fp, &matcode) != 0)
-  {
-    printf("Could not process Matrix Market banner for RHS.\n");
-    exit(1);
+  for (int line = 0; line < 6; ++line) {
+    fscanf(fp, "%*[^\n]\n");
   }
   // Size info
   int bm, bn;
