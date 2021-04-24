@@ -99,14 +99,11 @@ int main (int argc, char *argv[])
 
     // Iterate over column
     for (int i = col_start; i < col_end; ++i) {
-      if (row_idx[i] < row) {
-        // Don't consider earlier rows than current row
-        continue;
-      }
+      // Don't consider earlier rows than current row
       if (row_idx[i] == row) {
         // x[row] = b[row]/L[row, row]
         x[row] /= vals[i];
-      } else {
+      } else if (row_idx[i] > row) {
         // b[row_idx[i]] -= x[row]*L[i, row]
         x[row_idx[i]] -= x[row]*vals[i];
       }
@@ -130,14 +127,11 @@ int main (int argc, char *argv[])
 
     // Iterate over column
     for (int i = col_end - 1; i >= col_start; --i) {
-      if (row_idx[i] > row) {
-        // Don't consider later rows than current row
-        continue;
-      }
+      // Don't consider later rows than current row
       if (row_idx[i] == row) {
         // x[row] = b[row]/LT[row, row]
         x[row] /= vals[i];
-      } else {
+      } else if (row_idx[i] < row) {
         // b[row_idx[i]] -= x[row]*LT[i, row]
         x[row_idx[i]] -= x[row]*vals[i];
       }
