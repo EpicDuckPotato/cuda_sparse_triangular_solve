@@ -55,20 +55,20 @@ int main (int argc, char *argv[])
   cs *A = cs_triplet(&T);
   cout << "Converted LHS to CSC" << endl;
 
-  // Get Cholesky factor
+  // Get Cholesky factor L, where 
   css *S = cs_schol(A, 0);
   cout << "Performed symbolic Cholesky factorization" << endl;
   csn *Ln = cs_chol(A, S);
   cout << "Performed numeric Cholesky factorization" << endl;
   cs *L = Ln->L;
 
-  // Get CSC representation of Cholesky factor
+  // Get CSC representation of Cholesky factor L, where A = P'LL'P
   int *col_ptr = L->p;
   int *row_idx = L->i;
   double *vals = L->x;
 
-  // Read RHS vector (b) into x
-  double *x = (double*)malloc(sizeof(double)*(A->m));
+  // Read RHS vector (b)
+  double *b = (double*)malloc(sizeof(double)*(A->m));
   if ((fp = fopen(RHS_file, "r")) == NULL) 
     exit(1);
   for (int line = 0; line < 6; ++line) {
@@ -80,8 +80,12 @@ int main (int argc, char *argv[])
 
   for (int row = 0; row < A->m; row++)
   {
-    fscanf(fp, "%lg\n", &x[row]);
+    fscanf(fp, "%lg\n", &b[row]);
   }
+
+  cout << "Multiplying by permutation matrix" << endl;
+  double *x = (double*)malloc(sizeof(double)*(A->m));
+  cs_ipvec(A->m, S->Pinv, b, x);
 
   cout << "Solving lower triangular system" << endl;
 
@@ -107,7 +111,8 @@ int main (int argc, char *argv[])
 
   cout << "Transposing L" << endl;
 
-  // For now, just use CSparse to compute L transpose
+  // For now, just use CSparse to compute L transpose, though I think we
+  // should be able to do an upper triangular solve in CSC format
   cs *LT = cs_transpose(L, 1);
   col_ptr = LT->p;
   row_idx = LT->i;
@@ -130,24 +135,24 @@ int main (int argc, char *argv[])
     }
   }
 
+  cout << "Multiplying by permutation matrix" << endl;
+  cs_pvec(A->m, S->Pinv, x, b);
+
   cout << "Writing solution" << endl;
 
   ofstream myfile;
   myfile.open("solution.txt");
   for (int row = 0; row < A->m; ++row) {
-    myfile << x[row] << endl;
+    myfile << b[row] << endl;
   }
 
   myfile.close();
 
   // Solve system with csparse and see if it matches
-  double *b = (double*)malloc(sizeof(double)*(A->m));
   if ((fp = fopen(argv[2], "r")) == NULL) 
     exit(1);
-  if (mm_read_banner(fp, &matcode) != 0)
-  {
-    printf("Could not process Matrix Market banner for RHS.\n");
-    exit(1);
+  for (int line = 0; line < 6; ++line) {
+    fscanf(fp, "%*[^\n]\n");
   }
   // Size info
   fscanf(fp, "%d %d\n", &bm, &bn);
