@@ -154,6 +154,34 @@ int main (int argc, char *argv[])
 
   myfile.close();
 
+  // Solve system with csparse and see if it matches
+  double *b = (double*)malloc(sizeof(double)*(A->m));
+  if ((fp = fopen(argv[2], "r")) == NULL) 
+    exit(1);
+  if (mm_read_banner(fp, &matcode) != 0)
+  {
+    printf("Could not process Matrix Market banner for RHS.\n");
+    exit(1);
+  }
+  // Size info
+  fscanf(fp, "%d %d\n", &bm, &bn);
+
+  for (int row = 0; row < A->m; row++)
+  {
+    fscanf(fp, "%lg\n", &b[row]);
+  }
+  cs_cholsol(A, b, 0);
+
+  cout << "Writing ground truth solution" << endl;
+
+  myfile;
+  myfile.open("gt_solution.txt");
+  for (int row = 0; row < A->m; ++row) {
+    myfile << b[row] << endl;
+  }
+
+  myfile.close();
+
   cs_free(A);
   cs_free(S);
   cs_free(L);
