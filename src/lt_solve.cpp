@@ -97,16 +97,13 @@ int main (int argc, char *argv[])
     int col_start = col_ptr[row];
     int col_end = col_ptr[row + 1];
 
-    // Iterate over column
-    for (int i = col_start; i < col_end; ++i) {
-      // Don't consider earlier rows than current row
-      if (row_idx[i] == row) {
-        // x[row] = b[row]/L[row, row]
-        x[row] /= vals[i];
-      } else if (row_idx[i] > row) {
-        // b[row_idx[i]] -= x[row]*L[i, row]
-        x[row_idx[i]] -= x[row]*vals[i];
-      }
+    // x[row] = b[row]/L[row, row]
+    x[row] /= vals[col_start];
+
+    // Iterate down the column, starting right after the diagonal
+    for (int i = col_start + 1; i < col_end; ++i) {
+      // b[row_idx[i]] -= x[row]*L[i, row]
+      x[row_idx[i]] -= x[row]*vals[i];
     }
   }
 
@@ -125,16 +122,13 @@ int main (int argc, char *argv[])
     int col_start = col_ptr[row];
     int col_end = col_ptr[row + 1];
 
-    // Iterate over column
-    for (int i = col_end - 1; i >= col_start; --i) {
-      // Don't consider later rows than current row
-      if (row_idx[i] == row) {
-        // x[row] = b[row]/LT[row, row]
-        x[row] /= vals[i];
-      } else if (row_idx[i] < row) {
-        // b[row_idx[i]] -= x[row]*LT[i, row]
-        x[row_idx[i]] -= x[row]*vals[i];
-      }
+    // x[row] = b[row]/LT[row, row]
+    x[row] /= vals[col_end - 1];
+
+    // Iterate up the column, starting right before the diagonal
+    for (int i = col_end - 2; i >= col_start; --i) {
+      // b[row_idx[i]] -= x[row]*LT[i, row]
+      x[row_idx[i]] -= x[row]*vals[i];
     }
   }
 
