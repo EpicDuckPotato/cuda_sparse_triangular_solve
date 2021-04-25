@@ -2,6 +2,8 @@
 #include <fstream>
 #include "mm_io.h"
 #include "csparse.h"
+#include <malloc.h>
+#include <cstdlib>
 
 extern "C" {
   // Get declaration for f(int i, char c, float x)
@@ -26,7 +28,7 @@ int main (int argc, char *argv[])
   int ret_code;
   MM_typecode matcode;
   FILE *fp;
-  if ((fp = fopen(LHS_file, "r")) == NULL) 
+  if ((fp = fopen(LHS_file, "r")) == NULL)
     exit(1);
   if (mm_read_banner(fp, &matcode) != 0)
   {
@@ -55,7 +57,7 @@ int main (int argc, char *argv[])
   cs *A = cs_triplet(&T);
   cout << "Converted LHS to CSC" << endl;
 
-  // Get Cholesky factor L, where 
+  // Get Cholesky factor L, where
   css *S = cs_schol(A, 0);
   cout << "Performed symbolic Cholesky factorization" << endl;
   csn *Ln = cs_chol(A, S);
@@ -69,7 +71,7 @@ int main (int argc, char *argv[])
 
   // Read RHS vector (b)
   double *b = (double*)malloc(sizeof(double)*(A->m));
-  if ((fp = fopen(RHS_file, "r")) == NULL) 
+  if ((fp = fopen(RHS_file, "r")) == NULL)
     exit(1);
   for (int line = 0; line < 6; ++line) {
     fscanf(fp, "%*[^\n]\n");
@@ -149,7 +151,7 @@ int main (int argc, char *argv[])
   myfile.close();
 
   // Solve system with csparse and see if it matches
-  if ((fp = fopen(argv[2], "r")) == NULL) 
+  if ((fp = fopen(argv[2], "r")) == NULL)
     exit(1);
   for (int line = 0; line < 6; ++line) {
     fscanf(fp, "%*[^\n]\n");
@@ -178,6 +180,6 @@ int main (int argc, char *argv[])
   cs_free(L);
   cs_free(LT);
   free(x);
-  
+
   return 0;
 }
