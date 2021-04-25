@@ -51,6 +51,7 @@ void CudaSolver::factor() {
     return;
   }
 
+  // Boilerplate
   csric02Info_t info;
   cusparseCreateCsric02Info(&info);
 
@@ -67,10 +68,13 @@ void CudaSolver::factor() {
 
   void *pBuffer;
   cudaMalloc(&pBuffer, bufferSize);
+
+  // Analyze
   cusparseDcsric02_analysis(cs_handle, m, nnz, descr, device_vals,
                             device_row_ptr, device_col_idx, info,
                             CUSPARSE_SOLVE_POLICY_USE_LEVEL, pBuffer);
 
+  // Factor, and put the Cholesky factor into L_vals
   cusparseDcsric02(cs_handle, m, nnz, descr, L_vals,
                    device_row_ptr, device_col_idx, info,
                    CUSPARSE_SOLVE_POLICY_USE_LEVEL, pBuffer);
