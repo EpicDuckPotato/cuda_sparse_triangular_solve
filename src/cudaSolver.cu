@@ -236,6 +236,7 @@ void CudaSolver::lowerTriangularSolve() {
 
   int nCand_host = 0;
   while (true) {
+    // TODO: write this
     //kernelAnalyze<<<gridDim, blockDim>>>(rRoot, cRoot, nCand, levelInd, levelPtr, chainPtr, depGraph);
 
     cudaMemcpy(&nCand_host, nCand, sizeof(int), cudaMemcpyHostToDevice);
