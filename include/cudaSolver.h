@@ -35,10 +35,7 @@ class CudaSolver {
     void factor();
 
     /*
-     * solve: factors the LHS matrix into two triangular factors, then performs
-     * upper and lower triangular solves. if spd was true in the constructor,
-     * this function uses the Cholesky factorization. Otherwise it uses the LU
-     * factorization
+     * solve: should only be called after factor(). Computes the solution to Ax = b
      * ARGUMENTS
      * x: populated with the solution. Should be allocated to contain m doubles, where
      * m is the number of rows in the LHS matrix
@@ -46,6 +43,18 @@ class CudaSolver {
     void solve(double *x);
 
   private:
+    /*
+     * lowerTriangularSolve: solves Lv = b and puts the result into b
+     */
+    void lowerTriangularSolve();
+
+    /*
+     * upperTriangularSolve: should be called after lowerTriangularSolve.
+     * In the case of Cholesky, solves LTx = v and puts the result into b.
+     * In the case of LU (if we get there lol), solves Ux = v and puts the result into b.
+     */
+    void upperTriangularSolve();
+
     int m;
     int nnz;
 
@@ -53,13 +62,12 @@ class CudaSolver {
     int *device_row_ptr;
     int *device_col_idx;
     double *device_vals;
+    double *device_b;
 
     // The Cholesky factor has the same row pointers and column indices. Only the
     // values are different
     double *L_vals;
     bool lpop; // This just indicates whether we need to free L_vals in the destructor
-
-    double *device_b;
 
     bool use_cholesky;
 

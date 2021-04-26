@@ -2,8 +2,96 @@
 #include <cuda_runtime.h>
 #include <driver_functions.h>
 #include <stdio.h>
-
+#include <thrust/scan.h>
 #include "cudaSolver.h"
+
+struct GlobalConstants {
+  int *row_ptr;
+  int *col_idx;
+  int m;
+  int nnz;
+};
+
+__constant__ GlobalConstants cuConstSolverParams;
+
+/*
+ * kernelFindRootsP1: parallelizes over rows of the dependency
+ * graph and indicates roots
+ * ARGUMENTS
+ * roots: roots[i] is populated with 1 if row i is a root, and zero otherwise
+ * depGraph: value array for the dependency graph
+ */
+__global__ void kernelFindRootsP1(int *roots, char *depGraph) {
+  int row = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (row < cuConstSolverParams.m) {
+    int rowStart = cuConstSolverParams.row_ptr[row];
+
+    // There's a - 1 because the last element of the row
+    // is the diagonal element, which isn't a dependency
+    // for solving this row
+    int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
+
+    roots[row] = 1;
+    for (int i = rowStart; i < rowEnd; ++i) {
+      if (depGraph[i]) {
+        // Dependency exists
+        roots[row] = 0;
+        break;
+      }
+    }
+  }
+}
+
+/*
+ * kernelFindRootsP2: should be called after kernelFindRootsP1
+ * ARGUMENTS
+ * wRoot: populated with rows of roots
+ * nRoots: populated with number of roots
+ * rootScan: inclusive scan of the roots array from kernelFindRootsP1
+ */
+__global__ void kernelFindRootsP2(int *wRoot, int *nRoots, int *rootScan) {
+  int row = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (row < cuConstSolverParams.m &&
+      ((row == 0 && rootScan[row] == 1) ||
+       (row > 0 && rootScan[row] == rootScan[row - 1] + 1))) {
+    wRoot[rootScan[row]] = row - 1;
+  }
+  *nRoots = rootScan[cuConstSolverParams.m - 1];
+}
+
+/*
+ * kernelFindRootsInCandidatesP1: parallelizes over rows of the dependency
+ * graph and indicates roots, only looking at rows given by cRoots
+ * ARGUMENTS
+ * roots: roots[i] is populated with 1 if row i is a root, and zero otherwise
+ * cRoots: set of rows that could be roots
+ * nCand: number of candidates
+ * depGraph: value array for the dependency graph
+ */
+__global__ void kernelFindRootsInCandidatesP1(int *roots, int *cRoots, int *nCand, char *depGraph) {
+  int candIdx = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (candIdx < *nCand) {
+    int row = cRoots[candIdx];
+    int rowStart = cuConstSolverParams.row_ptr[row];
+
+    // There's a - 1 because the last element of the row
+    // is the diagonal element, which isn't a dependency
+    // for solving this row
+    int rowEnd = cuConstSolverParams.row_ptr[cRoots[row] + 1] - 1;
+
+    roots[row] = 1;
+    for (int i = rowStart; i < rowEnd; ++i) {
+      if (depGraph[i]) {
+        // Dependency exists
+        roots[row] = 0;
+        break;
+      }
+    }
+  }
+}
 
 CudaSolver::CudaSolver(int *row_idx, int *col_idx, double *vals, int rows, int nonzeros, double *b, bool spd) {
   cusparseCreate(&cs_handle);
@@ -88,11 +176,25 @@ void CudaSolver::factor() {
 }
 
 void CudaSolver::solve(double *x) {
+  lowerTriangularSolve();
+  upperTriangularSolve();
+  cudaMemcpy(x, device_b, m*sizeof(double), cudaMemcpyDeviceToHost);
+}
+
+void CudaSolver::lowerTriangularSolve() {
   // For the sake of getting things working, we'll just handle the spd case for now.
   // Later on, we can case on spd and choose Cholesky vs LU accordingly
   if (!use_cholesky) {
     return;
   }
+
+  // We'll need to access row_ptr and col_idx quite often without modifying them,
+  // so store them as global constants
+  GlobalConstants params;
+  params.row_ptr = device_row_ptr;
+  params.col_idx = device_col_idx;
+  params.m = m;
+  cudaMemcpyToSymbol(cuConstSolverParams, &params, sizeof(GlobalConstants));
 
   int *levelInd;
   int *levelPtr;
@@ -100,10 +202,68 @@ void CudaSolver::solve(double *x) {
   int *rRoot;
   int *wRoot;
   int *cRoot;
+  int *scratch;
+  int *nRoots;
+  int *nCand;
 
-  // Analysis phase
-  /*
-  dim3 blockDim(16, 16);
-  kernelFindRoots<<<gridDim, blockDim>>>();
-  */
+  // TODO: allocate memory for levelInd, levelPtr, chainPtr
+
+  // The maximum number of roots is the number of rows
+  cudaMalloc(&rRoot, m*sizeof(int));
+  cudaMalloc(&wRoot, m*sizeof(int));
+  cudaMalloc(&cRoot, m*sizeof(int));
+  cudaMalloc(&scratch, m*sizeof(int));
+  cudaMalloc(&nRoots, sizeof(int));
+  cudaMalloc(&nCand, sizeof(int));
+
+  // Sparse binary matrix with the same row pointers and column indices
+  // as the LHS. If a row contains all zeros, the corresponding row of the solution
+  // has no dependencies, and is therefore a root
+  char *depGraph;
+  cudaMalloc(&depGraph, nnz*sizeof(char));
+  cudaMemset(depGraph, 1, nnz*sizeof(char));
+
+  // ANALYSIS PHASE
+
+  // Finding roots parallelizes over rows, so we have 1D blocks
+  dim3 blockDim(256);
+  dim3 gridDim((m + blockDim.x - 1) / blockDim.x);
+
+  // TODO: Naumov only used one kernel for this. What am I doing wrong?
+  kernelFindRootsP1<<<gridDim, blockDim>>>(scratch, depGraph);
+  thrust::inclusive_scan(scratch, scratch + m, scratch);
+  kernelFindRootsP2<<<gridDim, blockDim>>>(wRoot, nRoots, scratch);
+
+  int nCand_host = 0;
+  while (true) {
+    //kernelAnalyze<<<gridDim, blockDim>>>(rRoot, cRoot, nCand, levelInd, levelPtr, chainPtr, depGraph);
+
+    cudaMemcpy(&nCand_host, nCand, sizeof(int), cudaMemcpyHostToDevice);
+    if (nCand_host == 0) {
+      break;
+    }
+
+    // TODO: again, Naumov did this with one kernel
+    kernelFindRootsInCandidatesP1<<<gridDim, blockDim>>>(scratch, cRoot, nCand, depGraph);
+    thrust::inclusive_scan(scratch, scratch + m, scratch);
+    kernelFindRootsP2<<<gridDim, blockDim>>>(wRoot, nRoots, scratch);
+  }
+
+  // SOLVE PHASE
+  // TODO: solve phase
+
+
+  // TODO: free memory for levelInd, levelPtr, chainPtr
+
+  cudaFree(rRoot);
+  cudaFree(wRoot);
+  cudaFree(cRoot);
+  cudaFree(scratch);
+  cudaFree(nRoots);
+  cudaFree(nCand);
+  cudaFree(depGraph);
+}
+
+void CudaSolver::upperTriangularSolve() {
+  // lol
 }
