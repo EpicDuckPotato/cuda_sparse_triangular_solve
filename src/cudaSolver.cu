@@ -93,6 +93,55 @@ __global__ void kernelFindRootsInCandidatesP1(int *roots, int *cRoots, int *nCan
   }
 }
 
+/*
+ * kernelAnalyze: populates levelInd, levelPtr, chainPtr, and cRoots.
+ * chainPtr determines the properties and number of kernels to be launched in the solve phase.
+ * ARGUMENTS
+ * roots: populated with rows of roots
+ * nRoots: number of roots
+ * cRoots: set of rows that could be roots
+ * nCand: number of candidates
+ * levelInd: list of sorted rows belonging to every level
+ * levelPtr: list of ending index (in levelInd) of each level 
+ * chainPtr: list of ending index (in levelPtr) of each chain 
+ * (Note: Naumov has levelPtr & chainPtr be the list of starting indices of each level/chain 
+ *   + an extra element to indicate the end of the last level/chain)
+ * levelIndSize: size of levelInd
+ * levelPtrSize: size of levelPtr
+ * chainPtrSize: size of chainPtr
+ * depGraph: value array for the dependency graph
+ */
+__global__ void kernelAnalyze(int *roots, int *nRoots, int *cRoots, int *nCand, int *levelInd, int *levelPtr, int *chainPtr, int *levelIndSize, int *levelPtrSize, int *chainPtrSize, char *depGraph) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (idx < *nRoots) {
+    // TODO: Not sure if this indexing is correct
+    int root = roots[idx];
+    int colStart = cuConstSolverParams.col_idx[root];
+    int colEnd = cuConstSolverParams.col_idx[root + 1];
+
+    for (int i = colStart; i < colEnd; ++i) {
+      if (depGraph[i]) {
+        // Dependency exists, set to 0 and add to cRoots
+        depGraph[i] = 0;
+        cRoots[*nCand] = i;
+        *nCand += 1;
+      }     
+    }
+
+    // TODO: Populate levelInd, is this sorted? when to increase levelIndSize?
+    levelInd[*levelIndSize + idx] = root;
+
+    // Populate levelPtr, only do this once
+    if (idx == *nRoots - 1) {
+      levelPtr[*levelPtrSize] = *levelIndSize + *nRoots - 1;
+      *levelPtrSize += 1;
+    }
+
+    // TODO: how to populate chainPtr? how to determine size of chain? 
+  }
+}
+
 CudaSolver::CudaSolver(int *row_idx, int *col_idx, double *vals, int rows, int nonzeros, double *b, bool spd) {
   cusparseCreate(&cs_handle);
 
@@ -205,8 +254,9 @@ void CudaSolver::lowerTriangularSolve() {
   int *scratch;
   int *nRoots;
   int *nCand;
-
-  // TODO: allocate memory for levelInd, levelPtr, chainPtr
+  int *levelIndSize;
+  int *levelPtrSize;
+  int *chainPtrSize;  
 
   // The maximum number of roots is the number of rows
   cudaMalloc(&rRoot, m*sizeof(int));
@@ -215,6 +265,12 @@ void CudaSolver::lowerTriangularSolve() {
   cudaMalloc(&scratch, m*sizeof(int));
   cudaMalloc(&nRoots, sizeof(int));
   cudaMalloc(&nCand, sizeof(int));
+  cudaMalloc(&levelInd, m*sizeof(int));
+  cudaMalloc(&levelPtr, m*sizeof(int));
+  cudaMalloc(&chainPtr, m*sizeof(int));
+  cudaMalloc(&levelIndSize, sizeof(int));
+  cudaMalloc(&levelPtrSize, sizeof(int));
+  cudaMalloc(&chainPtrSize, sizeof(int));
 
   // Sparse binary matrix with the same row pointers and column indices
   // as the LHS. If a row contains all zeros, the corresponding row of the solution
@@ -236,8 +292,8 @@ void CudaSolver::lowerTriangularSolve() {
 
   int nCand_host = 0;
   while (true) {
-    // TODO: write this
-    //kernelAnalyze<<<gridDim, blockDim>>>(rRoot, cRoot, nCand, levelInd, levelPtr, chainPtr, depGraph);
+    // TODO: replaced rRoot with wRoot, seems like rRoot unnecessary?
+    //kernelAnalyze<<<gridDim, blockDim>>>(wRoot, nRoots, cRoot, nCand, levelInd, levelPtr, chainPtr, levelIndSize, levelPtrSize, chainPtrSize, depGraph);
 
     cudaMemcpy(&nCand_host, nCand, sizeof(int), cudaMemcpyHostToDevice);
     if (nCand_host == 0) {
@@ -254,8 +310,6 @@ void CudaSolver::lowerTriangularSolve() {
   // TODO: solve phase
 
 
-  // TODO: free memory for levelInd, levelPtr, chainPtr
-
   cudaFree(rRoot);
   cudaFree(wRoot);
   cudaFree(cRoot);
@@ -263,6 +317,12 @@ void CudaSolver::lowerTriangularSolve() {
   cudaFree(nRoots);
   cudaFree(nCand);
   cudaFree(depGraph);
+  cudaFree(levelInd);
+  cudaFree(levelPtr);
+  cudaFree(chainPtr);
+  cudaFree(levelIndSize);
+  cudaFree(levelPtrSize);
+  cudaFree(chainPtrSize);
 }
 
 void CudaSolver::upperTriangularSolve() {
