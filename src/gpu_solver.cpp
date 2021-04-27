@@ -80,7 +80,7 @@ int main (int argc, char *argv[])
   // Allocate memory for solution
   double *x = (double*)malloc(sizeof(double)*n);
 
-  CudaSolver solver(row_idx, col_idx, vals, m, nz, b, spd);
+  CudaSolver solver(row_idx, col_idx, vals, m, nz, b, spd, false);
   solver.factor();
   solver.solve(x);
 

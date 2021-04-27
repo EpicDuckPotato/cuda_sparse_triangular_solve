@@ -3,7 +3,9 @@
 #include <driver_functions.h>
 #include <stdio.h>
 #include <thrust/scan.h>
+#include <thrust/device_ptr.h>
 #include "cudaSolver.h"
+#include <malloc.h>
 
 struct GlobalConstants {
   int *row_ptr;
@@ -56,7 +58,7 @@ __global__ void kernelFindRootsP2(int *wRoot, int *nRoots, int *rootScan) {
   if (row < cuConstSolverParams.m &&
       ((row == 0 && rootScan[row] == 1) ||
        (row > 0 && rootScan[row] == rootScan[row - 1] + 1))) {
-    wRoot[rootScan[row]] = row - 1;
+    wRoot[rootScan[row] - 1] = row;
   }
   *nRoots = rootScan[cuConstSolverParams.m - 1];
 }
@@ -102,9 +104,9 @@ __global__ void kernelFindRootsInCandidatesP1(int *roots, int *cRoots, int *nCan
  * cRoots: set of rows that could be roots
  * nCand: number of candidates
  * levelInd: list of sorted rows belonging to every level
- * levelPtr: list of ending index (in levelInd) of each level 
- * chainPtr: list of ending index (in levelPtr) of each chain 
- * (Note: Naumov has levelPtr & chainPtr be the list of starting indices of each level/chain 
+ * levelPtr: list of ending index (in levelInd) of each level
+ * chainPtr: list of ending index (in levelPtr) of each chain
+ * (Note: Naumov has levelPtr & chainPtr be the list of starting indices of each level/chain
  *   + an extra element to indicate the end of the last level/chain)
  * levelIndSize: size of levelInd
  * levelPtrSize: size of levelPtr
@@ -126,7 +128,7 @@ __global__ void kernelAnalyze(int *roots, int *nRoots, int *cRoots, int *nCand, 
         depGraph[i] = 0;
         cRoots[*nCand] = i;
         *nCand += 1;
-      }     
+      }
     }
 
     // TODO: Populate levelInd, is this sorted? when to increase levelIndSize?
@@ -138,11 +140,11 @@ __global__ void kernelAnalyze(int *roots, int *nRoots, int *cRoots, int *nCand, 
       *levelPtrSize += 1;
     }
 
-    // TODO: how to populate chainPtr? how to determine size of chain? 
+    // TODO: how to populate chainPtr? how to determine size of chain?
   }
 }
 
-CudaSolver::CudaSolver(int *row_idx, int *col_idx, double *vals, int rows, int nonzeros, double *b, bool spd) {
+CudaSolver::CudaSolver(int *row_idx, int *col_idx, double *vals, int m, int nnz, double *b, bool spd, bool is_lt) : m(m), nnz(nnz), spd(spd), is_lt(is_lt) {
   cusparseCreate(&cs_handle);
 
   cudaMalloc(&device_row_ptr, sizeof(int)*(m + 1));
@@ -162,11 +164,11 @@ CudaSolver::CudaSolver(int *row_idx, int *col_idx, double *vals, int rows, int n
 
   cudaFree(device_row_idx);
 
-  use_cholesky = spd;
-  m = m;
-  nnz = nnz;
-
-  lpop = false;
+  if (is_lt) {
+    cudaMalloc(&L_vals, sizeof(double)*nnz);
+    cudaMemcpy(L_vals, vals, sizeof(double)*nnz, cudaMemcpyHostToDevice);
+  }
+  lpop = is_lt;
 }
 
 CudaSolver::~CudaSolver() {
@@ -184,7 +186,7 @@ CudaSolver::~CudaSolver() {
 void CudaSolver::factor() {
   // For the sake of getting things working, we'll just handle the spd case for now.
   // Later on, we can case on spd and choose Cholesky vs LU accordingly
-  if (!use_cholesky) {
+  if (!spd) {
     return;
   }
 
@@ -226,14 +228,17 @@ void CudaSolver::factor() {
 
 void CudaSolver::solve(double *x) {
   lowerTriangularSolve();
-  upperTriangularSolve();
+
+  if (!is_lt) {
+    upperTriangularSolve();
+  }
   cudaMemcpy(x, device_b, m*sizeof(double), cudaMemcpyDeviceToHost);
 }
 
 void CudaSolver::lowerTriangularSolve() {
   // For the sake of getting things working, we'll just handle the spd case for now.
   // Later on, we can case on spd and choose Cholesky vs LU accordingly
-  if (!use_cholesky) {
+  if (!spd && !is_lt) {
     return;
   }
 
@@ -243,6 +248,7 @@ void CudaSolver::lowerTriangularSolve() {
   params.row_ptr = device_row_ptr;
   params.col_idx = device_col_idx;
   params.m = m;
+  params.nnz = nnz;
   cudaMemcpyToSymbol(cuConstSolverParams, &params, sizeof(GlobalConstants));
 
   int *levelInd;
@@ -256,7 +262,7 @@ void CudaSolver::lowerTriangularSolve() {
   int *nCand;
   int *levelIndSize;
   int *levelPtrSize;
-  int *chainPtrSize;  
+  int *chainPtrSize;
 
   // The maximum number of roots is the number of rows
   cudaMalloc(&rRoot, m*sizeof(int));
@@ -286,25 +292,48 @@ void CudaSolver::lowerTriangularSolve() {
   dim3 gridDim((m + blockDim.x - 1) / blockDim.x);
 
   // TODO: Naumov only used one kernel for this. What am I doing wrong?
+  printf("Finding roots p1\n");
   kernelFindRootsP1<<<gridDim, blockDim>>>(scratch, depGraph);
-  thrust::inclusive_scan(scratch, scratch + m, scratch);
+  cudaDeviceSynchronize();
+  printf("Scanning\n");
+  thrust::inclusive_scan(thrust::device_pointer_cast(scratch),
+                         thrust::device_pointer_cast(scratch) + m,
+                         thrust::device_pointer_cast(scratch));
+  cudaDeviceSynchronize();
+  printf("Finding roots p2\n");
   kernelFindRootsP2<<<gridDim, blockDim>>>(wRoot, nRoots, scratch);
+  cudaDeviceSynchronize();
 
   int nCand_host = 0;
+
+  // Only for debugging
+  int *wRoot_host = (int*)malloc(m*sizeof(int));
+  int nRoots_host = 0;
   while (true) {
     // TODO: replaced rRoot with wRoot, seems like rRoot unnecessary?
     //kernelAnalyze<<<gridDim, blockDim>>>(wRoot, nRoots, cRoot, nCand, levelInd, levelPtr, chainPtr, levelIndSize, levelPtrSize, chainPtrSize, depGraph);
+    //
+    cudaMemcpy(&nRoots_host, nRoots, sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(wRoot_host, wRoot, m*sizeof(int), cudaMemcpyDeviceToHost);
+    for (int i = 0; i < nRoots_host; ++i) {
+      printf("%d ", wRoot[i]);
+    }
+    printf("\n");
 
-    cudaMemcpy(&nCand_host, nCand, sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(&nCand_host, nCand, sizeof(int), cudaMemcpyDeviceToHost);
     if (nCand_host == 0) {
       break;
     }
 
     // TODO: again, Naumov did this with one kernel
     kernelFindRootsInCandidatesP1<<<gridDim, blockDim>>>(scratch, cRoot, nCand, depGraph);
-    thrust::inclusive_scan(scratch, scratch + m, scratch);
+    thrust::inclusive_scan(thrust::device_pointer_cast(scratch),
+                           thrust::device_pointer_cast(scratch) + m,
+                           thrust::device_pointer_cast(scratch));
     kernelFindRootsP2<<<gridDim, blockDim>>>(wRoot, nRoots, scratch);
   }
+
+  free(wRoot_host);
 
   // SOLVE PHASE
   // TODO: solve phase

@@ -14,12 +14,13 @@ class CudaSolver {
      * row_idx: row indices of the LHS
      * col_idx: column indices of LHS
      * vals: call the LHS A. vals[i] = A[row_idx[i], col_idx[i]]
-     * rows: rows in LHS
-     * nonzeros: number of nonzeros in LHS. row_idx, col_idx, and vals should each be of length nnz
+     * m: rows in LHS
+     * nnz: number of nonzeros in LHS. row_idx, col_idx, and vals should each be of length nnz
      * b: dense RHS vector
      * spd: true if the LHS is symmetric positive definite
+     * is_lt: true if the LHS is lower triangular
      */
-    CudaSolver(int *row_idx, int *col_idx, double *vals, int rows, int nonzeros, double *b, bool spd);
+    CudaSolver(int *row_idx, int *col_idx, double *vals, int m, int nnz, double *b, bool spd, bool is_lt);
 
     /*
      * destructor: frees memory, destroys cusparse handle. TODO: by the rule of three, we should
@@ -69,7 +70,8 @@ class CudaSolver {
     double *L_vals;
     bool lpop; // This just indicates whether we need to free L_vals in the destructor
 
-    bool use_cholesky;
+    bool spd;
+    bool is_lt;
 
     cusparseHandle_t cs_handle;
 };
