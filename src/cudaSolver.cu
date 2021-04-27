@@ -150,6 +150,7 @@ CudaSolver::CudaSolver(int *row_idx, int *col_idx, double *vals, int m, int nnz,
   cudaMalloc(&device_row_ptr, sizeof(int)*(m + 1));
   cudaMalloc(&device_col_idx, sizeof(int)*nnz);
   cudaMalloc(&device_vals, sizeof(double)*nnz);
+  cudaMalloc(&device_b, sizeof(double)*nnz);
 
   int *device_row_idx;
   cudaMalloc(&device_row_idx, sizeof(int)*nnz);
@@ -292,15 +293,12 @@ void CudaSolver::lowerTriangularSolve() {
   dim3 gridDim((m + blockDim.x - 1) / blockDim.x);
 
   // TODO: Naumov only used one kernel for this. What am I doing wrong?
-  printf("Finding roots p1\n");
   kernelFindRootsP1<<<gridDim, blockDim>>>(scratch, depGraph);
   cudaDeviceSynchronize();
-  printf("Scanning\n");
   thrust::inclusive_scan(thrust::device_pointer_cast(scratch),
                          thrust::device_pointer_cast(scratch) + m,
                          thrust::device_pointer_cast(scratch));
   cudaDeviceSynchronize();
-  printf("Finding roots p2\n");
   kernelFindRootsP2<<<gridDim, blockDim>>>(wRoot, nRoots, scratch);
   cudaDeviceSynchronize();
 
@@ -309,16 +307,19 @@ void CudaSolver::lowerTriangularSolve() {
   // Only for debugging
   int *wRoot_host = (int*)malloc(m*sizeof(int));
   int nRoots_host = 0;
+  int level = 0;
   while (true) {
     // TODO: replaced rRoot with wRoot, seems like rRoot unnecessary?
     //kernelAnalyze<<<gridDim, blockDim>>>(wRoot, nRoots, cRoot, nCand, levelInd, levelPtr, chainPtr, levelIndSize, levelPtrSize, chainPtrSize, depGraph);
     //
     cudaMemcpy(&nRoots_host, nRoots, sizeof(int), cudaMemcpyDeviceToHost);
     cudaMemcpy(wRoot_host, wRoot, m*sizeof(int), cudaMemcpyDeviceToHost);
+    printf("Roots on level %d:\n", level);
     for (int i = 0; i < nRoots_host; ++i) {
-      printf("%d ", wRoot[i]);
+      printf("%d ", wRoot_host[i]);
     }
     printf("\n");
+    ++level;
 
     cudaMemcpy(&nCand_host, nCand, sizeof(int), cudaMemcpyDeviceToHost);
     if (nCand_host == 0) {
