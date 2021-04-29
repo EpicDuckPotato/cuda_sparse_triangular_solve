@@ -7,6 +7,8 @@
 #include "cudaSolver.h"
 #include <malloc.h>
 
+#define THREADS_PER_BLOCK 256
+
 struct GlobalConstants {
   int *row_ptr;
   int *col_idx;
@@ -17,13 +19,13 @@ struct GlobalConstants {
 __constant__ GlobalConstants cuConstSolverParams;
 
 /*
- * kernelFindRootsP1: parallelizes over rows of the dependency
+ * kernelFindRoots: parallelizes over rows of the dependency
  * graph and indicates roots
  * ARGUMENTS
  * roots: roots[i] is populated with 1 if row i is a root, and zero otherwise
  * depGraph: value array for the dependency graph
  */
-__global__ void kernelFindRootsP1(int *roots, char *depGraph) {
+__global__ void kernelFindRoots(int *roots, char *depGraph) {
   int row = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (row < cuConstSolverParams.m) {
@@ -46,43 +48,24 @@ __global__ void kernelFindRootsP1(int *roots, char *depGraph) {
 }
 
 /*
- * kernelFindRootsP2: should be called after kernelFindRootsP1
- * ARGUMENTS
- * wRoot: populated with rows of roots
- * nRoots: populated with number of roots
- * rootScan: inclusive scan of the roots array from kernelFindRootsP1
- */
-__global__ void kernelFindRootsP2(int *wRoot, int *nRoots, int *rootScan) {
-  int row = blockIdx.x * blockDim.x + threadIdx.x;
-
-  if (row < cuConstSolverParams.m &&
-      ((row == 0 && rootScan[row] == 1) ||
-       (row > 0 && rootScan[row] == rootScan[row - 1] + 1))) {
-    wRoot[rootScan[row] - 1] = row;
-  }
-  *nRoots = rootScan[cuConstSolverParams.m - 1];
-}
-
-/*
- * kernelFindRootsInCandidatesP1: parallelizes over rows of the dependency
- * graph and indicates roots, only looking at rows given by cRoots
+ * kernelFindRootsInCandidates: parallelizes over rows of the dependency
+ * graph and indicates roots, only looking at rows given by cRoot
  * ARGUMENTS
  * roots: roots[i] is populated with 1 if row i is a root, and zero otherwise
- * cRoots: set of rows that could be roots
+ * cRoot: 0-1 array indicating candidates
  * nCand: number of candidates
  * depGraph: value array for the dependency graph
  */
-__global__ void kernelFindRootsInCandidatesP1(int *roots, int *cRoots, int *nCand, char *depGraph) {
-  int candIdx = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void kernelFindRootsInCandidates(int *roots, char *cRoot, char *depGraph) {
+  int row = blockIdx.x * blockDim.x + threadIdx.x;
 
-  if (candIdx < *nCand) {
-    int row = cRoots[candIdx];
+  if (cRoot[row] == 1) {
     int rowStart = cuConstSolverParams.row_ptr[row];
 
     // There's a - 1 because the last element of the row
     // is the diagonal element, which isn't a dependency
     // for solving this row
-    int rowEnd = cuConstSolverParams.row_ptr[cRoots[row] + 1] - 1;
+    int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
 
     roots[row] = 1;
     for (int i = rowStart; i < rowEnd; ++i) {
@@ -96,52 +79,44 @@ __global__ void kernelFindRootsInCandidatesP1(int *roots, int *cRoots, int *nCan
 }
 
 /*
- * kernelAnalyze: populates levelInd, levelPtr, chainPtr, and cRoots.
+ * kernelAnalyze: populates levelInd, levelPtr, and cRoot.
  * chainPtr determines the properties and number of kernels to be launched in the solve phase.
  * ARGUMENTS
- * roots: populated with rows of roots
- * nRoots: number of roots
- * cRoots: set of rows that could be roots
- * nCand: number of candidates
- * levelInd: list of sorted rows belonging to every level
- * levelPtr: list of ending index (in levelInd) of each level
- * chainPtr: list of ending index (in levelPtr) of each chain
- * (Note: Naumov has levelPtr & chainPtr be the list of starting indices of each level/chain
- *   + an extra element to indicate the end of the last level/chain)
- * levelIndSize: size of levelInd
- * levelPtrSize: size of levelPtr
- * chainPtrSize: size of chainPtr
+ * cRoot: candidates are indicated with a 1. We set the rows of any current roots to 0
+ * levelInd: sorted rows belonging to each level. We add rows on this level to the end
+ * levelPtr: starting indices (in levelInd) of each level.
+ * We add the starting index of the NEXT level to the end. If level == 0, we also
+ * make levelPtr[0] = 0
+ * nRoots: populated with number of roots
+ * rootScan: inclusive scan of the 0-1 array indicating roots
+ * rowsDone: how many rows have we already added to levelInd
+ * (i.e. at what index in levelInd should we start adding things)?
+ * level: what level is this?
  * depGraph: value array for the dependency graph
  */
-__global__ void kernelAnalyze(int *roots, int *nRoots, int *cRoots, int *nCand, int *levelInd, int *levelPtr, int *chainPtr, int *levelIndSize, int *levelPtrSize, int *chainPtrSize, char *depGraph) {
-  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void kernelAnalyze(char *cRoot, int *levelInd, int *levelPtr, int *nRoots,
+                              int *rootScan, int rowsDone, int level, char *depGraph) {
+  int row = blockIdx.x * blockDim.x + threadIdx.x;
 
-  if (idx < *nRoots) {
-    // TODO: Not sure if this indexing is correct
-    int root = roots[idx];
-    int colStart = cuConstSolverParams.col_idx[root];
-    int colEnd = cuConstSolverParams.col_idx[root + 1];
+  if (row < cuConstSolverParams.m &&
+      ((row == 0 && rootScan[row] == 1) ||
+       (row > 0 && rootScan[row] == rootScan[row - 1] + 1))) {
+    levelInd[rowsDone + rootScan[row] - 1] = row;
+    cRoot[row] = 0;
 
-    for (int i = colStart; i < colEnd; ++i) {
-      if (depGraph[i]) {
-        // Dependency exists, set to 0 and add to cRoots
+    // Eliminate dependencies
+    for (int i = 0; i < cuConstSolverParams.nnz; ++i) {
+      // TODO: there's got to be a better way of doing this loop
+      if (cuConstSolverParams.col_idx[i] == row && cuConstSolverParams.row_ptr[row + 1] != i + 1) {
         depGraph[i] = 0;
-        cRoots[*nCand] = i;
-        *nCand += 1;
       }
     }
-
-    // TODO: Populate levelInd, is this sorted? when to increase levelIndSize?
-    levelInd[*levelIndSize + idx] = root;
-
-    // Populate levelPtr, only do this once
-    if (idx == *nRoots - 1) {
-      levelPtr[*levelPtrSize] = *levelIndSize + *nRoots - 1;
-      *levelPtrSize += 1;
-    }
-
-    // TODO: how to populate chainPtr? how to determine size of chain?
   }
+  if (level == 0) {
+    levelPtr[level] = 0;
+  }
+  levelPtr[level + 1] = rowsDone + rootScan[cuConstSolverParams.m - 1];
+  *nRoots = rootScan[cuConstSolverParams.m - 1];
 }
 
 CudaSolver::CudaSolver(int *row_idx, int *col_idx, double *vals, int m, int nnz, double *b, bool spd, bool is_lt) : m(m), nnz(nnz), spd(spd), is_lt(is_lt) {
@@ -253,31 +228,29 @@ void CudaSolver::lowerTriangularSolve() {
   cudaMemcpyToSymbol(cuConstSolverParams, &params, sizeof(GlobalConstants));
 
   int *levelInd;
-  int *levelPtr;
-  int *chainPtr;
-  int *rRoot;
-  int *wRoot;
-  int *cRoot;
-  int *scratch;
-  int *nRoots;
-  int *nCand;
-  int *levelIndSize;
-  int *levelPtrSize;
-  int *chainPtrSize;
-
-  // The maximum number of roots is the number of rows
-  cudaMalloc(&rRoot, m*sizeof(int));
-  cudaMalloc(&wRoot, m*sizeof(int));
-  cudaMalloc(&cRoot, m*sizeof(int));
-  cudaMalloc(&scratch, m*sizeof(int));
-  cudaMalloc(&nRoots, sizeof(int));
-  cudaMalloc(&nCand, sizeof(int));
   cudaMalloc(&levelInd, m*sizeof(int));
-  cudaMalloc(&levelPtr, m*sizeof(int));
-  cudaMalloc(&chainPtr, m*sizeof(int));
-  cudaMalloc(&levelIndSize, sizeof(int));
-  cudaMalloc(&levelPtrSize, sizeof(int));
-  cudaMalloc(&chainPtrSize, sizeof(int));
+
+  int *levelPtr;
+  cudaMalloc(&levelPtr, (m + 1)*sizeof(int)); // Worst-case scenario, each level contains a single row, and we need a pointer to the end, so m + 1
+
+  // We can have max THREADS_PER_BLOCK rows in a chain, so there can be max
+  // (m + THREADS_PER_BLOCK)/THREADS_PER_BLOCK chains (accounting for integer division)
+  int *chainPtr = (int*)malloc(sizeof(int)*(m + THREADS_PER_BLOCK)/THREADS_PER_BLOCK + 1);
+
+  int *rRoot;
+  cudaMalloc(&rRoot, m*sizeof(int)); // The maximum number of roots is the number of rows
+  cudaMemset(rRoot, 0, m*sizeof(int));
+
+  int *wRoot;
+  cudaMalloc(&wRoot, m*sizeof(int));
+  cudaMemset(wRoot, 0, m*sizeof(int));
+
+  char *cRoot;
+  cudaMalloc(&cRoot, m*sizeof(char));
+  cudaMemset(cRoot, 1, m*sizeof(char)); // Everything's a candidate at first
+
+  int *nRoots;
+  cudaMalloc(&nRoots, sizeof(int));
 
   // Sparse binary matrix with the same row pointers and column indices
   // as the LHS. If a row contains all zeros, the corresponding row of the solution
@@ -289,70 +262,92 @@ void CudaSolver::lowerTriangularSolve() {
   // ANALYSIS PHASE
 
   // Finding roots parallelizes over rows, so we have 1D blocks
-  dim3 blockDim(256);
+  dim3 blockDim(THREADS_PER_BLOCK);
   dim3 gridDim((m + blockDim.x - 1) / blockDim.x);
 
-  // TODO: Naumov only used one kernel for this. What am I doing wrong?
-  kernelFindRootsP1<<<gridDim, blockDim>>>(scratch, depGraph);
-  cudaDeviceSynchronize();
-  thrust::inclusive_scan(thrust::device_pointer_cast(scratch),
-                         thrust::device_pointer_cast(scratch) + m,
-                         thrust::device_pointer_cast(scratch));
-  cudaDeviceSynchronize();
-  kernelFindRootsP2<<<gridDim, blockDim>>>(wRoot, nRoots, scratch);
-  cudaDeviceSynchronize();
 
-  int nCand_host = 0;
+  // Get 0-1 array of roots
+  kernelFindRoots<<<gridDim, blockDim>>>(rRoot, depGraph);
+  cudaDeviceSynchronize();
+  printf("found roots\n");
+  thrust::inclusive_scan(thrust::device_pointer_cast(rRoot),
+                         thrust::device_pointer_cast(rRoot) + m,
+                         thrust::device_pointer_cast(rRoot));
+  printf("scanned roots\n");
 
-  // Only for debugging
-  int *wRoot_host = (int*)malloc(m*sizeof(int));
   int nRoots_host = 0;
   int level = 0;
-  while (true) {
-    // TODO: replaced rRoot with wRoot, seems like rRoot unnecessary?
-    //kernelAnalyze<<<gridDim, blockDim>>>(wRoot, nRoots, cRoot, nCand, levelInd, levelPtr, chainPtr, levelIndSize, levelPtrSize, chainPtrSize, depGraph);
-    //
-    cudaMemcpy(&nRoots_host, nRoots, sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(wRoot_host, wRoot, m*sizeof(int), cudaMemcpyDeviceToHost);
-    printf("Roots on level %d:\n", level);
-    for (int i = 0; i < nRoots_host; ++i) {
-      printf("%d ", wRoot_host[i]);
-    }
-    printf("\n");
-    ++level;
+  int rowsDone = 0;
+  int rowsInChain = 0;
+  int chainIdx = 0;
+  chainPtr[chainIdx] = level;
 
-    cudaMemcpy(&nCand_host, nCand, sizeof(int), cudaMemcpyDeviceToHost);
-    if (nCand_host == 0) {
+  while (true) {
+    kernelAnalyze<<<gridDim, blockDim>>>(cRoot, levelInd, levelPtr,
+                                         nRoots, rRoot, rowsDone, level, depGraph);
+    cudaDeviceSynchronize();
+    printf("analyzed\n");
+
+    cudaMemcpy(&nRoots_host, nRoots, sizeof(int), cudaMemcpyDeviceToHost);
+    if (nRoots_host == 0) {
+      chainPtr[++chainIdx] = level;
       break;
     }
 
-    // TODO: again, Naumov did this with one kernel
-    kernelFindRootsInCandidatesP1<<<gridDim, blockDim>>>(scratch, cRoot, nCand, depGraph);
-    thrust::inclusive_scan(thrust::device_pointer_cast(scratch),
-                           thrust::device_pointer_cast(scratch) + m,
-                           thrust::device_pointer_cast(scratch));
-    kernelFindRootsP2<<<gridDim, blockDim>>>(wRoot, nRoots, scratch);
+    ++level;
+
+    if (rowsInChain + nRoots_host > THREADS_PER_BLOCK) {
+      // We've filled up the current chain
+      chainPtr[++chainIdx] = level;
+      rowsInChain = nRoots_host;
+    }
+
+    rowsInChain += nRoots_host;
+    rowsDone += nRoots_host;
+
+    // Get 0-1 array of roots
+    cudaMemset(rRoot, 0, m*sizeof(int));
+    kernelFindRootsInCandidates<<<gridDim, blockDim>>>(rRoot, cRoot, depGraph);
+    cudaDeviceSynchronize();
+    printf("found roots in candidates\n");
+    thrust::inclusive_scan(thrust::device_pointer_cast(rRoot),
+                           thrust::device_pointer_cast(rRoot) + m,
+                           thrust::device_pointer_cast(rRoot));
   }
 
-  free(wRoot_host);
+  // Print out roots on each level for testing
+  int *levelPtr_host = (int*)malloc(sizeof(int)*(m + 1));
+  int *levelInd_host = (int*)malloc(sizeof(int)*m);
+  cudaMemcpy(levelPtr_host, levelPtr, sizeof(int)*(m + 1), cudaMemcpyDeviceToHost);
+  cudaMemcpy(levelInd_host, levelInd, sizeof(int)*m, cudaMemcpyDeviceToHost);
+  printf("levelPtr: ");
+  for (int i = 0; i < level + 1; ++i) {
+    printf("%d ", levelPtr_host[i]);
+  }
+  printf("\n");
+  printf("levelInd: ");
+  for (int i = 0; i < m; ++i) {
+    printf("%d ", levelInd_host[i]);
+  }
+  printf("\n");
+  printf("chainPtr: ");
+  for (int i = 0; i < chainIdx; ++i) {
+    printf("%d ", chainPtr[i]);
+  }
+  printf("\n");
 
   // SOLVE PHASE
   // TODO: solve phase
 
 
+  cudaFree(levelInd);
+  cudaFree(levelPtr);
+  free(chainPtr);
   cudaFree(rRoot);
   cudaFree(wRoot);
   cudaFree(cRoot);
-  cudaFree(scratch);
   cudaFree(nRoots);
-  cudaFree(nCand);
   cudaFree(depGraph);
-  cudaFree(levelInd);
-  cudaFree(levelPtr);
-  cudaFree(chainPtr);
-  cudaFree(levelIndSize);
-  cudaFree(levelPtrSize);
-  cudaFree(chainPtrSize);
 }
 
 void CudaSolver::upperTriangularSolve() {
