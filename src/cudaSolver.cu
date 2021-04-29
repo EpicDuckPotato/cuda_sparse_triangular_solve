@@ -121,6 +121,51 @@ __global__ void kernelAnalyze(char *cRoot, int *levelInd, int *levelPtr, int *nR
   *nRoots = rootScan[cuConstSolverParams.m - 1];
 }
 
+/*
+ * kernelMultiblock: processes a single level
+ * ARGUMENTS
+ * start: start of chain
+ * levelInd: sorted rows belonging to each level
+ * levelPtr: starting indices (in levelInd) of each level
+ */
+__global__ void kernelMultiblock(int start, int *levelInd, int *levelPtr) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  //int startRow = levelInd[levelPtr[start]];
+  //int endRow = levelInd[levelPtr[start + 1] - 1];
+  int startIdx = levelPtr[start];
+  int endIdx = levelPtr[start + 1] - 1;
+
+  if (idx >= startIdx && idx <= endIdx) {
+    // TODO: Compute element of solution corresponding to row -> solution[row]
+    int row = levelInd[idx];
+  }
+}
+
+/*
+ * kernelSingleblock: processes a chain
+ * ARGUMENTS
+ * start: start of chain
+ * end: end of chain
+ * levelInd: sorted rows belonging to each level
+ * levelPtr: starting indices (in levelInd) of each level
+ */
+__global__ void kernelSingleblock(int start, int end, int *levelInd, int *levelPtr) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  int startIdx;
+  int endIdx;
+
+  for (int i = start; i < end; ++i) {
+    startIdx = levelPtr[i];
+    endIdx = levelPtr[i + 1] - 1;
+
+    if (idx >= startIdx && idx <= endIdx) {
+      // TODO: Compute element of solution corresponding to row -> solution[row]
+      int row = levelInd[idx];
+    }
+    __syncthreads();
+  }
+}
+
 CudaSolver::CudaSolver(int *row_idx, int *col_idx, double *vals, int m, int nnz, double *b, bool spd, bool is_lt) : m(m), nnz(nnz), spd(spd), is_lt(is_lt) {
   cusparseCreate(&cs_handle);
 
@@ -338,8 +383,24 @@ void CudaSolver::lowerTriangularSolve() {
   printf("\n");
 
   // SOLVE PHASE
-  // TODO: solve phase
+  
+  int start;
+  int end;
 
+  // Iterate over chains
+  for (int i = 0; i < chainIdx - 1; ++i) {
+      start = chainPtr[i];
+      end = chainPtr[i+1];
+
+      // Process a chain
+      if (end - start > 1) {
+        kernelSingleblock<<<gridDim, blockDim>>>(start, end, levelInd, levelPtr);
+      }
+      // Process a single level
+      else {
+        kernelMultiblock<<<gridDim, blockDim>>>(start, levelInd, levelPtr);
+      }
+  }
 
   cudaFree(levelInd);
   cudaFree(levelPtr);
