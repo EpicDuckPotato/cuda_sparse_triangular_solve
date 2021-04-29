@@ -75,6 +75,8 @@ __global__ void kernelFindRootsInCandidates(int *roots, char *cRoot, char *depGr
         break;
       }
     }
+  } else {
+    roots[row] = 0;
   }
 }
 
@@ -306,7 +308,6 @@ void CudaSolver::lowerTriangularSolve() {
     rowsDone += nRoots_host;
 
     // Get 0-1 array of roots
-    cudaMemset(rRoot, 0, m*sizeof(int));
     kernelFindRootsInCandidates<<<gridDim, blockDim>>>(rRoot, cRoot, depGraph);
     cudaDeviceSynchronize();
     printf("found roots in candidates\n");
