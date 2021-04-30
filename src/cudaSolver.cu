@@ -121,6 +121,71 @@ __global__ void kernelAnalyze(char *cRoot, int *levelInd, int *levelPtr, int *nR
   *nRoots = rootScan[cuConstSolverParams.m - 1];
 }
 
+/*
+ * kernelMultiblock: processes a single level
+ * ARGUMENTS
+ * start: start of chain
+ * levelInd: sorted rows belonging to each level
+ * levelPtr: starting indices (in levelInd) of each level
+ * solution: solution matrix
+ * b: b matrix
+ * val: L matrix values
+ */
+__global__ void kernelMultiblock(int start, int *levelInd, int *levelPtr, double *solution, double *b, double *val) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  int startIdx = levelPtr[start];
+  int endIdx = levelPtr[start + 1] - 1;
+
+  if (idx >= startIdx && idx <= endIdx) {
+    // Compute element of solution corresponding to row
+    int row = levelInd[idx];
+    int rowStart = cuConstSolverParams.row_ptr[row];
+    int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
+
+    solution[row] = b[row];
+    for (int i = rowStart; i < rowEnd; ++i) {
+      solution[row] -= val[i] * solution[i - rowStart];
+    }
+    solution[row] /= val[rowEnd];
+  }
+}
+
+/*
+ * kernelSingleblock: processes a chain
+ * ARGUMENTS
+ * start: start of chain
+ * end: end of chain
+ * levelInd: sorted rows belonging to each level
+ * levelPtr: starting indices (in levelInd) of each level
+ * solution: solution matrix
+ * b: b matrix
+ * val: L matrix values
+ */
+__global__ void kernelSingleblock(int start, int end, int *levelInd, int *levelPtr, double *solution, double *b, double *val) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  int startIdx;
+  int endIdx;
+
+  for (int i = start; i < end; ++i) {
+    startIdx = levelPtr[i];
+    endIdx = levelPtr[i + 1] - 1;
+
+    if (idx >= startIdx && idx <= endIdx) {
+      // Compute element of solution corresponding to row
+      int row = levelInd[idx];
+      int rowStart = cuConstSolverParams.row_ptr[row];
+      int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
+
+      solution[row] = b[row];
+      for (int i = rowStart; i < rowEnd; ++i) {
+        solution[row] -= val[i] * solution[i - rowStart];
+      }
+      solution[row] /= val[rowEnd];
+    }
+    __syncthreads();
+  }
+}
+
 CudaSolver::CudaSolver(int *row_idx, int *col_idx, double *vals, int m, int nnz, double *b, bool spd, bool is_lt) : m(m), nnz(nnz), spd(spd), is_lt(is_lt) {
   cusparseCreate(&cs_handle);
 
@@ -254,6 +319,9 @@ void CudaSolver::lowerTriangularSolve() {
   int *nRoots;
   cudaMalloc(&nRoots, sizeof(int));
 
+  double *solution;
+  cudaMalloc(&solution, m*sizeof(double));
+
   // Sparse binary matrix with the same row pointers and column indices
   // as the LHS. If a row contains all zeros, the corresponding row of the solution
   // has no dependencies, and is therefore a root
@@ -338,8 +406,26 @@ void CudaSolver::lowerTriangularSolve() {
   printf("\n");
 
   // SOLVE PHASE
-  // TODO: solve phase
+  
+  int start;
+  int end;
 
+  // Iterate over chains
+  for (int i = 0; i < chainIdx - 1; ++i) {
+      start = chainPtr[i];
+      end = chainPtr[i+1];
+
+      // Process a chain
+      if (end - start > 1) {
+        kernelSingleblock<<<gridDim, blockDim>>>(start, end, levelInd, levelPtr, solution, device_b, device_vals);
+      }
+      // Process a single level
+      else {
+        kernelMultiblock<<<gridDim, blockDim>>>(start, levelInd, levelPtr, solution, device_b, device_vals);
+      }
+  }
+
+  // TODO: test solve phase
 
   cudaFree(levelInd);
   cudaFree(levelPtr);
@@ -349,6 +435,7 @@ void CudaSolver::lowerTriangularSolve() {
   cudaFree(cRoot);
   cudaFree(nRoots);
   cudaFree(depGraph);
+  cudaFree(solution);
 }
 
 void CudaSolver::upperTriangularSolve() {
