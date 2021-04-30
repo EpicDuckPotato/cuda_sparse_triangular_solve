@@ -44,5 +44,12 @@ int main (int argc, char *argv[])
   cout << "Testing slightly more complex" << endl;
   CudaSolver solver2(&row_idx[0], &col_idx[0], &vals[0], m, nnz, &b[0], false, true);
   solver2.solve(&x[0]);
+
+  cout << "Testing something that's not all ones" << endl;
+  b[2] = 10;
+  b[3] = 3;
+  vals[5] = 2;
+  CudaSolver solver3(&row_idx[0], &col_idx[0], &vals[0], m, nnz, &b[0], false, true);
+  solver3.solve(&x[0]);
   return 0;
 }
