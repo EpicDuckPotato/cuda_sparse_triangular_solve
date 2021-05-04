@@ -111,30 +111,22 @@ int main (int argc, char *argv[])
     }
   }
 
-  cout << "Transposing L" << endl;
-
-  // For now, just use CSparse to compute L transpose, though I think we
-  // should be able to do an upper triangular solve in CSC format
-  cs *LT = cs_transpose(L, 1);
-  col_ptr = LT->p;
-  row_idx = LT->i;
-  vals = LT->x;
-
   cout << "Solving upper triangular system" << endl;
 
-  // Solve LTx = v (upper triangular solve)
+  // Solve LTx = v (upper triangular solve). The trick here
+  // is that we can just treat L as a CSR matrix now, so
+  // we don't need to compute the transpose explicitly.
+  int *row_ptr = col_ptr;
+  int *col_idx = row_idx;
   for (int row = A->m - 1; row >= 0; --row) {
-    int col_start = col_ptr[row];
-    int col_end = col_ptr[row + 1];
+    int row_start = row_ptr[row];
+    int row_end = row_ptr[row + 1];
 
-    // x[row] = b[row]/LT[row, row]
-    x[row] /= vals[col_end - 1];
-
-    // Iterate up the column, starting right before the diagonal
-    for (int i = col_end - 2; i >= col_start; --i) {
-      // b[row_idx[i]] -= x[row]*LT[i, row]
-      x[row_idx[i]] -= x[row]*vals[i];
+    for (int i = row_start + 1; i < row_end; ++i) {
+      x[row] -= x[i]*vals[i];
     }
+
+    x[row] /= vals[row_start];
   }
 
   cout << "Multiplying by permutation matrix" << endl;
@@ -178,7 +170,6 @@ int main (int argc, char *argv[])
   cs_free(A);
   cs_free(S);
   cs_free(L);
-  cs_free(LT);
   free(x);
 
   return 0;
