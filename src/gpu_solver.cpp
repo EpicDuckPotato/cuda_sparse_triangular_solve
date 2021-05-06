@@ -6,6 +6,7 @@
 #include <string.h>
 #include <assert.h>
 #include "cudaSolver.h"
+#include "csparse.h"
 
 extern "C" {
   #include "csparse.h"
@@ -78,11 +79,42 @@ int main (int argc, char *argv[])
   bool spd = !strncmp(spd_str, "spd", 3);
 
   // Allocate memory for solution
-  double *x = (double*)malloc(sizeof(double)*n);
+  double *x = (double*)malloc(sizeof(double)*m);
 
   CudaSolver solver(row_idx, col_idx, vals, m, nz, b, spd, false);
   solver.factor();
   solver.solve(x);
+
+  ofstream myfile;
+  myfile.open("solution.txt");
+  for (int row = 0; row < m; ++row) {
+    myfile << x[row] << endl;
+  }
+  myfile.close();
+
+  // Get L factor and check solution against csparse
+  double *Lvals = (double*)malloc(sizeof(double)*nz);
+  int *row_ptr = (int*)malloc(sizeof(int)*m);
+  solver.get_Lfactor(row_ptr, col_idx, Lvals);
+
+  cs Lt;
+  Lt.nzmax = nz;
+  Lt.m = m;
+  Lt.n = m;
+  Lt.p = row_ptr;
+  Lt.i = col_idx;
+  Lt.x = Lvals;
+  Lt.nz = nz;
+  cs_ltsolve(&Lt, b);
+
+  myfile.open("gt_solution.txt");
+  for (int row = 0; row < m; ++row) {
+    myfile << b[row] << endl;
+  }
+
+  myfile.close();
+  free(Lvals);
+  free(row_ptr);
 
   free(row_idx);
   free(col_idx);

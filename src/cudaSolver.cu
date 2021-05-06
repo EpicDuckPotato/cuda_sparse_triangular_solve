@@ -204,12 +204,6 @@ CudaSolver::CudaSolver(int *row_idx, int *col_idx, double *vals, int m, int nnz,
                    CUSPARSE_INDEX_BASE_ZERO);
 
   cudaFree(device_row_idx);
-
-  if (is_lt) {
-    cudaMalloc(&L_vals, sizeof(double)*nnz);
-    cudaMemcpy(L_vals, vals, sizeof(double)*nnz, cudaMemcpyHostToDevice);
-  }
-  lpop = is_lt;
 }
 
 CudaSolver::~CudaSolver() {
@@ -218,10 +212,6 @@ CudaSolver::~CudaSolver() {
   cudaFree(device_col_idx);
   cudaFree(device_vals);
   cudaFree(device_b);
-
-  if (lpop) {
-    cudaFree(L_vals);
-  }
 }
 
 void CudaSolver::factor() {
@@ -254,8 +244,8 @@ void CudaSolver::factor() {
                             device_row_ptr, device_col_idx, info,
                             CUSPARSE_SOLVE_POLICY_USE_LEVEL, pBuffer);
 
-  // Factor, and put the Cholesky factor into L_vals
-  cusparseDcsric02(cs_handle, m, nnz, descr, L_vals,
+  // Factor, and put the Cholesky factor into device_vals
+  cusparseDcsric02(cs_handle, m, nnz, descr, device_vals,
                    device_row_ptr, device_col_idx, info,
                    CUSPARSE_SOLVE_POLICY_USE_LEVEL, pBuffer);
 
@@ -264,7 +254,12 @@ void CudaSolver::factor() {
   cusparseDestroyMatDescr(descr);
 
   cusparseDestroyCsric02Info(info);
-  lpop = true;
+}
+
+void CudaSolver::get_Lfactor(int *row_ptr, int *col_idx, double *vals) {
+  cudaMemcpy(row_ptr, device_row_ptr, m*sizeof(int), cudaMemcpyDeviceToHost);
+  cudaMemcpy(col_idx, device_col_idx, nnz*sizeof(int), cudaMemcpyDeviceToHost);
+  cudaMemcpy(vals, device_vals, nnz*sizeof(double), cudaMemcpyDeviceToHost);
 }
 
 void CudaSolver::solve(double *x) {
@@ -334,11 +329,9 @@ void CudaSolver::lowerTriangularSolve() {
   // Get 0-1 array of roots
   kernelFindRoots<<<gridDim, blockDim>>>(rRoot, depGraph);
   cudaDeviceSynchronize();
-  printf("found roots\n");
   thrust::inclusive_scan(thrust::device_pointer_cast(rRoot),
                          thrust::device_pointer_cast(rRoot) + m,
                          thrust::device_pointer_cast(rRoot));
-  printf("scanned roots\n");
 
   int nRoots_host = 0;
   int level = 0;
@@ -352,7 +345,6 @@ void CudaSolver::lowerTriangularSolve() {
     kernelAnalyze<<<gridDim, blockDim>>>(cRoot, levelInd, levelPtr,
                                          nRoots, rRoot, rowsDone, level, depGraph);
     cudaDeviceSynchronize();
-    printf("analyzed\n");
 
     cudaMemcpy(&nRoots_host, nRoots, sizeof(int), cudaMemcpyDeviceToHost);
     if (nRoots_host == 0) {
@@ -374,7 +366,6 @@ void CudaSolver::lowerTriangularSolve() {
     // Get 0-1 array of roots
     kernelFindRootsInCandidates<<<gridDim, blockDim>>>(rRoot, cRoot, depGraph);
     cudaDeviceSynchronize();
-    printf("found roots in candidates\n");
     thrust::inclusive_scan(thrust::device_pointer_cast(rRoot),
                            thrust::device_pointer_cast(rRoot) + m,
                            thrust::device_pointer_cast(rRoot));
@@ -385,21 +376,6 @@ void CudaSolver::lowerTriangularSolve() {
   int *levelInd_host = (int*)malloc(sizeof(int)*m);
   cudaMemcpy(levelPtr_host, levelPtr, sizeof(int)*(m + 1), cudaMemcpyDeviceToHost);
   cudaMemcpy(levelInd_host, levelInd, sizeof(int)*m, cudaMemcpyDeviceToHost);
-  printf("levelPtr: ");
-  for (int i = 0; i < level + 1; ++i) {
-    printf("%d ", levelPtr_host[i]);
-  }
-  printf("\n");
-  printf("levelInd: ");
-  for (int i = 0; i < m; ++i) {
-    printf("%d ", levelInd_host[i]);
-  }
-  printf("\n");
-  printf("chainPtr: ");
-  for (int i = 0; i < chainIdx + 1; ++i) {
-    printf("%d ", chainPtr[i]);
-  }
-  printf("\n");
 
   // SOLVE PHASE
 
@@ -421,15 +397,6 @@ void CudaSolver::lowerTriangularSolve() {
       kernelMultiblock<<<gridDim, blockDim>>>(start, levelInd, levelPtr, device_b, device_vals);
     }
   }
-
-  double *x = (double*)malloc(m*sizeof(double));
-  cudaMemcpy(x, device_b, m*sizeof(double), cudaMemcpyDeviceToHost);
-  printf("solution:\n");
-  for (int i = 0; i < m; ++i) {
-    printf("%f\n", x[i]);
-  }
-  printf("\n");
-  free(x);
 
   cudaFree(levelInd);
   cudaFree(levelPtr);

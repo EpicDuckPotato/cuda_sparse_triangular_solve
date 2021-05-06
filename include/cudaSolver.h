@@ -36,6 +36,16 @@ class CudaSolver {
     void factor();
 
     /*
+     * get_Lfactor: get the lower triangular factor. Should be called after factor()
+     * ARGUMENTS
+     * row_ptr: CSR row pointer for L. Should be allocated to contain m + 1 ints
+     * col_idx: CSR column indices for L. Should be allocated to contain nnz ints
+     * vals: populated with the values of the lower triangular factor. Should be allocated
+     * to contain nnz doubles
+     */
+    void get_Lfactor(int *row_ptr, int *col_idx, double *vals);
+
+    /*
      * solve: should only be called after factor(). Computes the solution to Ax = b
      * ARGUMENTS
      * x: populated with the solution. Should be allocated to contain m doubles, where
@@ -64,11 +74,6 @@ class CudaSolver {
     int *device_col_idx;
     double *device_vals;
     double *device_b;
-
-    // The Cholesky factor has the same row pointers and column indices. Only the
-    // values are different
-    double *L_vals;
-    bool lpop; // This just indicates whether we need to free L_vals in the destructor
 
     bool spd;
     bool is_lt;
