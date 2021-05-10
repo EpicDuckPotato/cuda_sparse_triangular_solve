@@ -109,7 +109,7 @@ __global__ void kernelAnalyze(char *cRoot, int *levelInd, int *levelPtr, int *nR
     // Eliminate dependencies
     for (int i = 0; i < cuConstSolverParams.nnz; ++i) {
       // TODO: there's got to be a better way of doing this loop
-      if (cuConstSolverParams.col_idx[i] == row && cuConstSolverParams.row_ptr[row + 1] != i + 1) {
+      if (cuConstSolverParams.col_idx[i] == row) {
         depGraph[i] = 0;
       }
     }
@@ -229,7 +229,7 @@ void CudaSolver::factor() {
   cusparseCreateMatDescr(&descr);
   cusparseSetMatIndexBase(descr, CUSPARSE_INDEX_BASE_ZERO);
   cusparseSetMatType(descr, CUSPARSE_MATRIX_TYPE_SYMMETRIC);
-  cusparseSetMatFillMode(descr, CUSPARSE_FILL_MODE_LOWER);
+  cusparseSetMatFillMode(descr, CUSPARSE_FILL_MODE_UPPER);
   cusparseSetMatDiagType(descr, CUSPARSE_DIAG_TYPE_NON_UNIT);
 
   int bufferSize;
@@ -257,7 +257,7 @@ void CudaSolver::factor() {
 }
 
 void CudaSolver::get_Lfactor(int *row_ptr, int *col_idx, double *vals) {
-  cudaMemcpy(row_ptr, device_row_ptr, m*sizeof(int), cudaMemcpyDeviceToHost);
+  cudaMemcpy(row_ptr, device_row_ptr, (m + 1)*sizeof(int), cudaMemcpyDeviceToHost);
   cudaMemcpy(col_idx, device_col_idx, nnz*sizeof(int), cudaMemcpyDeviceToHost);
   cudaMemcpy(vals, device_vals, nnz*sizeof(double), cudaMemcpyDeviceToHost);
 }
@@ -349,15 +349,18 @@ void CudaSolver::lowerTriangularSolve() {
     cudaMemcpy(&nRoots_host, nRoots, sizeof(int), cudaMemcpyDeviceToHost);
     if (nRoots_host == 0) {
       chainPtr[++chainIdx] = level;
+      // Now the last element of chainPtr contains the number of levels
       break;
     }
 
     ++level;
 
     if (rowsInChain + nRoots_host > THREADS_PER_BLOCK) {
-      // We've filled up the current chain
+      // Adding this new level of roots to the current chain
+      // would cause us to overflow the current chain. Add a new
+      // chain starting at this level
       chainPtr[++chainIdx] = level;
-      rowsInChain = nRoots_host;
+      rowsInChain = 0;
     }
 
     rowsInChain += nRoots_host;

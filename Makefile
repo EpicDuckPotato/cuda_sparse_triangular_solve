@@ -13,3 +13,5 @@ cpu_solver:
 	g++ -w -o cpu_solver src/cpu_solver.cpp src/*.c -I"include" -O3 -Wextra -std=c++11
 cudaSolver.o: src/cudaSolver.cu
 	nvcc -std=c++11 -c -arch=sm_30 src/cudaSolver.cu -I"include" -lcusparse
+clean:
+	rm cuda_tests gpu_solver cpu_solver cudaSolver.o

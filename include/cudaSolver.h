@@ -9,9 +9,10 @@ class CudaSolver {
   public:
     /*
      * constructor: allocates and populates device memory with the given LHS and RHS.
-     * Accepts the LHS in COO format, but stores it internally in CSR format.
+     * Accepts the LHS in COO format, but stores it internally in CSR format. If
+     * the matrix is spd, we want the UPPER TRIANGLE
      * ARGUMENTS
-     * row_idx: row indices of the LHS
+     * row_idx: row indices of the LHS. MUST BE SORTED
      * col_idx: column indices of LHS
      * vals: call the LHS A. vals[i] = A[row_idx[i], col_idx[i]]
      * m: rows in LHS

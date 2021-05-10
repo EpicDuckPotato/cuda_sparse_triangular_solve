@@ -81,7 +81,7 @@ int main (int argc, char *argv[])
   // Allocate memory for solution
   double *x = (double*)malloc(sizeof(double)*m);
 
-  CudaSolver solver(row_idx, col_idx, vals, m, nz, b, spd, false);
+  CudaSolver solver(col_idx, row_idx, vals, m, nz, b, spd, false);
   solver.factor();
   solver.solve(x);
 
@@ -94,7 +94,7 @@ int main (int argc, char *argv[])
 
   // Get L factor and check solution against csparse
   double *Lvals = (double*)malloc(sizeof(double)*nz);
-  int *row_ptr = (int*)malloc(sizeof(int)*m);
+  int *row_ptr = (int*)malloc(sizeof(int)*(m + 1));
   solver.get_Lfactor(row_ptr, col_idx, Lvals);
 
   cs Lt;
@@ -105,7 +105,7 @@ int main (int argc, char *argv[])
   Lt.i = col_idx;
   Lt.x = Lvals;
   Lt.nz = nz;
-  cs_ltsolve(&Lt, b);
+  cs_utsolve(&Lt, b);
 
   myfile.open("gt_solution.txt");
   for (int row = 0; row < m; ++row) {

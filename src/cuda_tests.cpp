@@ -51,5 +51,14 @@ int main (int argc, char *argv[])
   vals[5] = 2;
   CudaSolver solver3(&row_idx[0], &col_idx[0], &vals[0], m, nnz, &b[0], false, true);
   solver3.solve(&x[0]);
+
+  cout << "Testing something else that's not all ones" << endl;
+  vals[3] = 3;
+  CudaSolver solver4(&row_idx[0], &col_idx[0], &vals[0], m, nnz, &b[0], false, true);
+  solver4.solve(&x[0]);
+
+  for (int i = 0; i < 4; ++i) {
+    cout << x[i] << endl;
+  }
   return 0;
 }
