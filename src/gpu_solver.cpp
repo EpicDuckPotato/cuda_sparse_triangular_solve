@@ -17,13 +17,11 @@ using namespace std;
 
 int main (int argc, char *argv[])
 {
-  if (argc < 4) {
-    printf("Input a filename for the LHS, a filename for the RHS, and spd or nspd to indicate whether the matrix is or isn't symmetric positive definite.\n");
+  if (argc < 2) {
+    printf("Input a filename for the LHS\n");
   }
 
   char *LHS_file = argv[1];
-  char *RHS_file = argv[2];
-  char *spd_str = argv[3];
 
   // Read LHS matrix (A)
   cout << "Reading LHS" << endl;
@@ -59,29 +57,17 @@ int main (int argc, char *argv[])
     --col_idx[i];
   }
 
-  // Read RHS vector (b)
+  // Create an RHS vector (b)
   double *b = (double*)malloc(sizeof(double)*m);
-  if ((fp = fopen(RHS_file, "r")) == NULL)
-    exit(1);
-  for (int line = 0; line < 6; ++line) {
-    fscanf(fp, "%*[^\n]\n");
-  }
-  // Size info
-  int bm, bn;
-  fscanf(fp, "%d %d\n", &bm, &bn);
-  assert(bn == 1);
-
-  for (int row = 0; row < bm; row++)
+  for (int row = 0; row < m; row++)
   {
-    fscanf(fp, "%lg\n", &b[row]);
+    b[row] = 1;
   }
-
-  bool spd = !strncmp(spd_str, "spd", 3);
 
   // Allocate memory for solution
   double *x = (double*)malloc(sizeof(double)*m);
 
-  CudaSolver solver(col_idx, row_idx, vals, m, nz, b, spd, false);
+  CudaSolver solver(row_idx, col_idx, vals, m, nz, b);
   solver.factor();
   solver.solve(x);
 
@@ -93,17 +79,22 @@ int main (int argc, char *argv[])
   myfile.close();
 
   // Get L factor and check solution against csparse
-  double *Lvals = (double*)malloc(sizeof(double)*nz);
-  int *row_ptr = (int*)malloc(sizeof(int)*(m + 1));
-  solver.get_Lfactor(row_ptr, col_idx, Lvals);
+  int *row_ptr_L = (int*)malloc(sizeof(int)*(m + 1));
+  int *col_idx_L = (int*)malloc(sizeof(int)*nz);
+  double *vals_L = (double*)malloc(sizeof(double)*nz);
+  int *row_ptr_U = (int*)malloc(sizeof(int)*(m + 1));
+  int *col_idx_U = (int*)malloc(sizeof(int)*nz);
+  double *vals_U = (double*)malloc(sizeof(double)*nz);
+  solver.get_factors(row_ptr_L, col_idx_L, vals_L,
+                     row_ptr_U, col_idx_U, vals_U);
 
   cs Lt;
   Lt.nzmax = nz;
   Lt.m = m;
   Lt.n = m;
-  Lt.p = row_ptr;
-  Lt.i = col_idx;
-  Lt.x = Lvals;
+  Lt.p = row_ptr_L;
+  Lt.i = col_idx_L;
+  Lt.x = vals_L;
   Lt.nz = nz;
   cs_utsolve(&Lt, b);
 
@@ -113,8 +104,12 @@ int main (int argc, char *argv[])
   }
 
   myfile.close();
-  free(Lvals);
-  free(row_ptr);
+  free(row_ptr_L);
+  free(col_idx_L);
+  free(vals_L);
+  free(row_ptr_U);
+  free(col_idx_U);
+  free(vals_U);
 
   free(row_idx);
   free(col_idx);
