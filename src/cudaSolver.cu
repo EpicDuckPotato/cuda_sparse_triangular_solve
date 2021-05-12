@@ -507,20 +507,18 @@ void CudaSolver::triangularSolve(bool isLower) {
   int chainIdx = 0;
   chainPtr[chainIdx] = level;
 
-  //struct timeval t1, t2;
+  struct timeval t1, t2;
 
   // Upon exiting, chainIdx contains the number of chains
   while (true) {
-    //gettimeofday(&t1, 0);
+    gettimeofday(&t1, 0);
     kernelAnalyze<<<gridDim, blockDim>>>(cRoot, levelInd, levelPtr,
                                          nRoots, rRoot, rowsDone, level, depGraph);
     cudaDeviceSynchronize();
 
-    /*
     gettimeofday(&t2, 0);
-    double time = (1000000.0*(t2.tv_sec-t1.tv_sec) + t2.tv_usec-t1.tv_usec)/1000.0;
-    printf("Time to analyze roots:  %3.1f ms \n", time);
-    */
+    double time = 1000000.0*(t2.tv_sec-t1.tv_sec) + t2.tv_usec-t1.tv_usec;
+    printf("Time to analyze roots:  %f us \n", time);
 
     cudaMemcpy(&nRoots_host, nRoots, sizeof(int), cudaMemcpyDeviceToHost);
     if (nRoots_host == 0) {
@@ -544,6 +542,7 @@ void CudaSolver::triangularSolve(bool isLower) {
 
     printf("Rows down: %d\n", rowsDone);
 
+    gettimeofday(&t1, 0);
     // Get 0-1 array of roots
     if (isLower) {
       kernelFindRootsInCandidatesL<<<gridDim, blockDim>>>(rRoot, cRoot, depGraph);
@@ -551,6 +550,10 @@ void CudaSolver::triangularSolve(bool isLower) {
       kernelFindRootsInCandidatesU<<<gridDim, blockDim>>>(rRoot, cRoot, depGraph);
     }
     cudaDeviceSynchronize();
+
+    gettimeofday(&t2, 0);
+    time = 1000000.0*(t2.tv_sec-t1.tv_sec) + t2.tv_usec-t1.tv_usec;
+    printf("Time to find roots in candidates:  %f us \n", time);
 
     thrust::inclusive_scan(thrust::device_pointer_cast(rRoot),
                            thrust::device_pointer_cast(rRoot) + m,
