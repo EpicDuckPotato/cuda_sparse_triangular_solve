@@ -89,7 +89,7 @@ __global__ void kernelFindRootsU(int *roots, char *depGraph) {
     int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
 
     roots[row] = 1;
-    for (int i = rowEnd; cuConstSolverParams.col_idx[i] >= row && i >= rowStart; --i) {
+    for (int i = rowEnd; cuConstSolverParams.col_idx[i] > row && i >= rowStart; --i) {
       if (depGraph[i]) {
         // Dependency exists
         roots[row] = 0;
@@ -116,7 +116,7 @@ __global__ void kernelFindRootsInCandidatesU(int *roots, char *cRoot, char *depG
     int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
 
     roots[row] = 1;
-    for (int i = rowEnd; cuConstSolverParams.col_idx[i] >= row && i >= rowStart; --i) {
+    for (int i = rowEnd; cuConstSolverParams.col_idx[i] > row && i >= rowStart; --i) {
       if (depGraph[i]) {
         // Dependency exists
         roots[row] = 0;
@@ -247,10 +247,11 @@ __global__ void kernelMultiblockU(int start, int *levelInd, int *levelPtr, doubl
     int rowStart = cuConstSolverParams.row_ptr[row];
     int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
 
-    for (int i = rowEnd; cuConstSolverParams.col_idx[i] >= row && i >= rowStart; --i) {
+    int i = rowEnd;
+    for (; cuConstSolverParams.col_idx[i] > row && i >= rowStart; --i) {
       b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
     }
-    b[row] /= val[rowStart];
+    b[row] /= val[i];
   }
 }
 
@@ -280,10 +281,11 @@ __global__ void kernelSingleblockU(int start, int end, int *levelInd, int *level
       int rowStart = cuConstSolverParams.row_ptr[row];
       int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
 
-      for (int i = rowEnd; cuConstSolverParams.col_idx[i] >= row && i >= rowStart; --i) {
+      int i = rowEnd;
+      for (; cuConstSolverParams.col_idx[i] > row && i >= rowStart; --i) {
         b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
       }
-      b[row] /= val[rowStart];
+      b[row] /= val[i];
     }
     __syncthreads();
   }

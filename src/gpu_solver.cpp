@@ -98,6 +98,16 @@ int main (int argc, char *argv[])
   Lt.nz = nz;
   cs_utsolve(&Lt, b);
 
+  cs Ut;
+  Ut.nzmax = nz;
+  Ut.m = m;
+  Ut.n = m;
+  Ut.p = row_ptr_U;
+  Ut.i = col_idx_U;
+  Ut.x = vals_U;
+  Ut.nz = nz;
+  cs_ltsolve(&Ut, b);
+
   myfile.open("gt_solution.txt");
   for (int row = 0; row < m; ++row) {
     myfile << b[row] << endl;
