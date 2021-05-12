@@ -10,6 +10,7 @@
 #include <thrust/execution_policy.h>
 #include "cudaSolver.h"
 #include <malloc.h>
+#include <sys/time.h>
 
 #define THREADS_PER_BLOCK 256
 
@@ -18,6 +19,10 @@ struct GlobalConstants {
   int *col_idx;
   int m;
   int nnz;
+
+  // Only for dependency graph
+  int *col_ptr;
+  int *row_idx;
 };
 
 __constant__ GlobalConstants cuConstSolverParams;
@@ -59,18 +64,21 @@ __global__ void kernelFindRootsL(int *roots, char *depGraph) {
 __global__ void kernelFindRootsInCandidatesL(int *roots, char *cRoot, char *depGraph) {
   int row = blockIdx.x * blockDim.x + threadIdx.x;
 
-  if (cRoot[row] == 1) {
-    roots[row] = 1;
-    for (int i = cuConstSolverParams.row_ptr[row];
-         cuConstSolverParams.col_idx[i] < row && i < cuConstSolverParams.row_ptr[row + 1]; ++i) {
-      if (depGraph[i]) {
-        // Dependency exists
-        roots[row] = 0;
-        break;
+  if (row < cuConstSolverParams.m) {
+    if (cRoot[row] == 1) {
+      roots[row] = 1;
+      for (int i = cuConstSolverParams.row_ptr[row];
+           i < cuConstSolverParams.row_ptr[row + 1] &&
+           cuConstSolverParams.col_idx[i] < row; ++i) {
+        if (depGraph[i]) {
+          // Dependency exists
+          roots[row] = 0;
+          break;
+        }
       }
+    } else {
+      roots[row] = 0;
     }
-  } else {
-    roots[row] = 0;
   }
 }
 
@@ -111,20 +119,23 @@ __global__ void kernelFindRootsU(int *roots, char *depGraph) {
 __global__ void kernelFindRootsInCandidatesU(int *roots, char *cRoot, char *depGraph) {
   int row = blockIdx.x * blockDim.x + threadIdx.x;
 
-  if (cRoot[row] == 1) {
-    int rowStart = cuConstSolverParams.row_ptr[row];
-    int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
+  if (row < cuConstSolverParams.m) {
+    if (cRoot[row] == 1) {
+      int rowStart = cuConstSolverParams.row_ptr[row];
+      int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
 
-    roots[row] = 1;
-    for (int i = rowEnd; cuConstSolverParams.col_idx[i] > row && i >= rowStart; --i) {
-      if (depGraph[i]) {
-        // Dependency exists
-        roots[row] = 0;
-        break;
+      roots[row] = 1;
+      for (int i = rowEnd;
+           i >= rowStart && cuConstSolverParams.col_idx[i] > row; --i) {
+        if (depGraph[i]) {
+          // Dependency exists
+          roots[row] = 0;
+          break;
+        }
       }
+    } else {
+      roots[row] = 0;
     }
-  } else {
-    roots[row] = 0;
   }
 }
 
@@ -155,10 +166,14 @@ __global__ void kernelAnalyze(char *cRoot, int *levelInd, int *levelPtr, int *nR
     cRoot[row] = 0;
 
     // Eliminate dependencies
-    for (int i = 0; i < cuConstSolverParams.nnz; ++i) {
-      // TODO: there's got to be a better way of doing this loop
-      if (cuConstSolverParams.col_idx[i] == row) {
-        depGraph[i] = 0;
+    for (int i = cuConstSolverParams.col_ptr[row];
+         i < cuConstSolverParams.col_ptr[row + 1]; ++i) {
+      int crow = cuConstSolverParams.row_idx[i];
+      for (int j = cuConstSolverParams.row_ptr[crow];
+           j < cuConstSolverParams.row_ptr[crow + 1]; ++j) {
+        if (cuConstSolverParams.col_idx[j] == row) {
+          depGraph[j] = 0;
+        }
       }
     }
   }
@@ -294,28 +309,35 @@ __global__ void kernelSingleblockU(int start, int end, int *levelInd, int *level
 CudaSolver::CudaSolver(int *row_idx, int *col_idx, double *vals, int m, int nnz, double *b) : m(m), nnz(nnz) {
   cusparseCreate(&cs_handle);
 
-  thrust::device_vector<int> device_row_idx(row_idx, row_idx + nnz);
-  thrust::device_vector<int> device_row_idx2(device_row_idx);
-
   cudaMalloc(&device_row_ptr, sizeof(int)*(m + 1));
-  cudaMalloc(&device_vals, sizeof(double)*nnz);
+  cudaMalloc(&device_col_ptr, sizeof(int)*(m + 1));
+  cudaMalloc(&device_row_idx, sizeof(int)*nnz);
   cudaMalloc(&device_col_idx, sizeof(double)*nnz);
+  cudaMalloc(&device_vals, sizeof(double)*nnz);
+  cudaMemcpy(device_row_idx, row_idx, sizeof(int)*nnz, cudaMemcpyHostToDevice);
   cudaMemcpy(device_col_idx, col_idx, sizeof(int)*nnz, cudaMemcpyHostToDevice);
   cudaMemcpy(device_vals, vals, sizeof(double)*nnz, cudaMemcpyHostToDevice);
 
-  // We assume col_idx is sorted because that's how the matrices from matrix market are.
-  thrust::stable_sort_by_key(thrust::device,
-                             device_row_idx.begin(),
-                             device_row_idx.end(),
-                             thrust::device_pointer_cast(device_col_idx));
+  thrust::device_vector<int> device_row_idx2(device_row_idx, device_row_idx + nnz);
+  thrust::device_vector<int> device_row_idx3(device_row_idx3);
 
+  // Convert COO to CSC (for efficient iteration through dependency graph)
+  cusparseXcoo2csr(cs_handle, device_col_idx, nnz, m, device_col_ptr,
+                   CUSPARSE_INDEX_BASE_ZERO);
+
+  // We assume col_idx is sorted because that's how the matrices from matrix market are.
   thrust::stable_sort_by_key(thrust::device,
                              device_row_idx2.begin(),
                              device_row_idx2.end(),
+                             thrust::device_pointer_cast(device_col_idx));
+
+  thrust::stable_sort_by_key(thrust::device,
+                             device_row_idx3.begin(),
+                             device_row_idx3.end(),
                              thrust::device_pointer_cast(device_vals));
 
   // Convert COO to CSR
-  cusparseXcoo2csr(cs_handle, thrust::raw_pointer_cast(device_row_idx.data()), nnz, m, device_row_ptr,
+  cusparseXcoo2csr(cs_handle, thrust::raw_pointer_cast(device_row_idx2.data()), nnz, m, device_row_ptr,
                    CUSPARSE_INDEX_BASE_ZERO);
 
   cudaMalloc(&device_b, sizeof(double)*m);
@@ -326,6 +348,8 @@ CudaSolver::~CudaSolver() {
   cusparseDestroy(cs_handle);
   cudaFree(device_row_ptr);
   cudaFree(device_col_idx);
+  cudaFree(device_col_ptr);
+  cudaFree(device_row_idx);
   cudaFree(device_vals);
   cudaFree(device_b);
 }
@@ -421,6 +445,8 @@ void CudaSolver::triangularSolve(bool isLower) {
   params.col_idx = device_col_idx;
   params.m = m;
   params.nnz = nnz;
+  params.col_ptr = device_col_ptr;
+  params.row_idx = device_row_idx;
   cudaMemcpyToSymbol(cuConstSolverParams, &params, sizeof(GlobalConstants));
 
   int *levelInd;
@@ -469,6 +495,7 @@ void CudaSolver::triangularSolve(bool isLower) {
     kernelFindRootsU<<<gridDim, blockDim>>>(rRoot, depGraph);
   }
   cudaDeviceSynchronize();
+
   thrust::inclusive_scan(thrust::device_pointer_cast(rRoot),
                          thrust::device_pointer_cast(rRoot) + m,
                          thrust::device_pointer_cast(rRoot));
@@ -480,11 +507,20 @@ void CudaSolver::triangularSolve(bool isLower) {
   int chainIdx = 0;
   chainPtr[chainIdx] = level;
 
+  //struct timeval t1, t2;
+
   // Upon exiting, chainIdx contains the number of chains
   while (true) {
+    //gettimeofday(&t1, 0);
     kernelAnalyze<<<gridDim, blockDim>>>(cRoot, levelInd, levelPtr,
                                          nRoots, rRoot, rowsDone, level, depGraph);
     cudaDeviceSynchronize();
+
+    /*
+    gettimeofday(&t2, 0);
+    double time = (1000000.0*(t2.tv_sec-t1.tv_sec) + t2.tv_usec-t1.tv_usec)/1000.0;
+    printf("Time to analyze roots:  %3.1f ms \n", time);
+    */
 
     cudaMemcpy(&nRoots_host, nRoots, sizeof(int), cudaMemcpyDeviceToHost);
     if (nRoots_host == 0) {
@@ -506,7 +542,7 @@ void CudaSolver::triangularSolve(bool isLower) {
     rowsInChain += nRoots_host;
     rowsDone += nRoots_host;
 
-    printf("Rows done: %d\n", rowsDone);
+    printf("Rows down: %d\n", rowsDone);
 
     // Get 0-1 array of roots
     if (isLower) {
@@ -515,16 +551,12 @@ void CudaSolver::triangularSolve(bool isLower) {
       kernelFindRootsInCandidatesU<<<gridDim, blockDim>>>(rRoot, cRoot, depGraph);
     }
     cudaDeviceSynchronize();
+
     thrust::inclusive_scan(thrust::device_pointer_cast(rRoot),
                            thrust::device_pointer_cast(rRoot) + m,
                            thrust::device_pointer_cast(rRoot));
   }
 
-  // Print out roots on each level for testing
-  int *levelPtr_host = (int*)malloc(sizeof(int)*(m + 1));
-  int *levelInd_host = (int*)malloc(sizeof(int)*m);
-  cudaMemcpy(levelPtr_host, levelPtr, sizeof(int)*(m + 1), cudaMemcpyDeviceToHost);
-  cudaMemcpy(levelInd_host, levelInd, sizeof(int)*m, cudaMemcpyDeviceToHost);
 
   // SOLVE PHASE
 
@@ -555,12 +587,20 @@ void CudaSolver::triangularSolve(bool isLower) {
     }
   }
 
+  printf("Freeing levelInd\n");
   cudaFree(levelInd);
+  printf("Freeing levelPtr\n");
   cudaFree(levelPtr);
+  printf("Freeing chainPtr\n");
   free(chainPtr);
+  printf("Freeing rRoot\n");
   cudaFree(rRoot);
+  printf("Freeing wRoot\n");
   cudaFree(wRoot);
+  printf("Freeing cRoot\n");
   cudaFree(cRoot);
+  printf("Freeing nRoots\n");
   cudaFree(nRoots);
+  printf("Freeing depGraph\n");
   cudaFree(depGraph);
 }
