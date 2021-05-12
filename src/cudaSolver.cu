@@ -5,14 +5,13 @@
 #include <thrust/scan.h>
 #include <thrust/device_ptr.h>
 #include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
 #include <thrust/sort.h>
 #include <thrust/execution_policy.h>
 #include "cudaSolver.h"
 #include <malloc.h>
 
 #define THREADS_PER_BLOCK 256
-
-typedef thrust::device_vector<int>::iterator iit;
 
 struct GlobalConstants {
   int *row_ptr;
@@ -173,7 +172,7 @@ __global__ void kernelSingleblock_L(int start, int end, int *levelInd, int *leve
   }
 }
 
-CudaSolver::CudaSolver(int *row_idx, int *col_idx, double *vals, int m, int nnz, double *b) : col_idx(col_idx), vals(vals), m(m), nnz(nnz) {
+CudaSolver::CudaSolver(int *row_idx, int *col_idx, double *vals, int m, int nnz, double *b) : m(m), nnz(nnz) {
   cusparseCreate(&cs_handle);
 
   thrust::device_vector<int> device_row_idx(row_idx, row_idx + nnz);
@@ -244,30 +243,16 @@ void CudaSolver::factor() {
   cusparseDestroyMatDescr(descr);
 
   cusparseDestroyCsrilu02Info(info);
-
-  cudaMemcpy(vals, device_vals, nnz*sizeof(double), cudaMemcpyDeviceToHost);
 }
 
 void CudaSolver::get_factors(int *row_ptr_L, int *col_idx_L, double *vals_L,
                              int *row_ptr_U, int *col_idx_U, double *vals_U) {
-  int *full_row_ptr = (int*)malloc((m + 1)*sizeof(int));
+  int *full_row_ptr = (int*)malloc(sizeof(int)*(m + 1));
+  int *col_idx = (int*)malloc(sizeof(int)*nnz);
+  double *vals = (double*)malloc(sizeof(double)*nnz);
   cudaMemcpy(full_row_ptr, device_row_ptr, (m + 1)*sizeof(int), cudaMemcpyDeviceToHost);
-
-  printf("row_ptr: ");
-  for (int row = 0; row <= m; ++row) {
-    printf("%d ", full_row_ptr[row]);
-  }
-  printf("\n");
-  printf("col_idx: ");
-  for (int i = 0; i < nnz; ++i) {
-    printf("%d ", col_idx[i]);
-  }
-  printf("\n");
-  printf("vals: ");
-  for (int i = 0; i < nnz; ++i) {
-    printf("%f ", vals[i]);
-  }
-  printf("\n");
+  cudaMemcpy(col_idx, device_col_idx, nnz*sizeof(int), cudaMemcpyDeviceToHost);
+  cudaMemcpy(vals, device_vals, nnz*sizeof(double), cudaMemcpyDeviceToHost);
 
   int iL = 0;
   int iU = 0;
@@ -299,6 +284,8 @@ void CudaSolver::get_factors(int *row_ptr_L, int *col_idx_L, double *vals_L,
   row_ptr_U[row] = iU;
 
   free(full_row_ptr);
+  free(col_idx);
+  free(vals);
 }
 
 void CudaSolver::solve(double *x) {
@@ -397,6 +384,8 @@ void CudaSolver::lowerTriangularSolve() {
 
     rowsInChain += nRoots_host;
     rowsDone += nRoots_host;
+
+    printf("Rows done: %d\n", rowsDone);
 
     // Get 0-1 array of roots
     kernelFindRootsInCandidates_L<<<gridDim, blockDim>>>(rRoot, cRoot, depGraph);

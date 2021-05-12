@@ -8,7 +8,6 @@
 using namespace std;
 
 void print_csr_matrix(int *row_ptr, int *col_idx, double *vals, int m, int nnz) {
-  /*
   for (int row = 0; row < m; ++row) {
     int rowstart = row_ptr[row];
     int rowend = row_ptr[row + 1];
@@ -23,8 +22,8 @@ void print_csr_matrix(int *row_ptr, int *col_idx, double *vals, int m, int nnz) 
     }
     cout << endl;
   }
-  */
 
+  /*
   for (int row = 0; row < m; ++row) {
     cout << row_ptr[row] << " ";
   }
@@ -37,6 +36,7 @@ void print_csr_matrix(int *row_ptr, int *col_idx, double *vals, int m, int nnz) 
     cout << vals[i] << " ";
   }
   cout << endl;
+  */
 }
 
 int main (int argc, char *argv[])

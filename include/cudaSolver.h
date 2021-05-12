@@ -79,9 +79,6 @@ class CudaSolver {
     double *device_vals;
     double *device_b;
 
-    int *col_idx;
-    double *vals;
-
     cusparseHandle_t cs_handle;
 };
 
