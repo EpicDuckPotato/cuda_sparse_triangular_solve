@@ -7,7 +7,8 @@
 
 using namespace std;
 
-void print_csr_matrix(int *row_ptr, int *col_idx, double *vals, int m) {
+void print_csr_matrix(int *row_ptr, int *col_idx, double *vals, int m, int nnz) {
+  /*
   for (int row = 0; row < m; ++row) {
     int rowstart = row_ptr[row];
     int rowend = row_ptr[row + 1];
@@ -22,6 +23,20 @@ void print_csr_matrix(int *row_ptr, int *col_idx, double *vals, int m) {
     }
     cout << endl;
   }
+  */
+
+  for (int row = 0; row < m; ++row) {
+    cout << row_ptr[row] << " ";
+  }
+  cout << endl;
+  for (int i = 0; i < nnz; ++i) {
+    cout << col_idx[i] << " ";
+  }
+  cout << endl;
+  for (int i = 0; i < nnz; ++i) {
+    cout << vals[i] << " ";
+  }
+  cout << endl;
 }
 
 int main (int argc, char *argv[])
@@ -56,10 +71,10 @@ int main (int argc, char *argv[])
                      row_ptr_U.data(), col_idx_U.data(), vals_U.data());
 
   cout << "L factor:" << endl;
-  print_csr_matrix(row_ptr_L.data(), col_idx_L.data(), vals_L.data(), m);
+  print_csr_matrix(row_ptr_L.data(), col_idx_L.data(), vals_L.data(), m, nnz);
 
   cout << "U factor:" << endl;
-  print_csr_matrix(row_ptr_U.data(), col_idx_U.data(), vals_U.data(), m);
+  print_csr_matrix(row_ptr_U.data(), col_idx_U.data(), vals_U.data(), m, nnz);
 
   cout << "solution:" << endl;
   for (int i = 0; i < m; ++i) {
@@ -71,7 +86,6 @@ int main (int argc, char *argv[])
   col_idx.insert(col_idx.begin() + 1, 0);
   vals.insert(vals.begin() + 1, 1);
 
-  cout << "inserting" << endl;
   row_idx.insert(row_idx.begin() + 3, 2);
   col_idx.insert(col_idx.begin() + 3, 1);
   vals.insert(vals.begin() + 3, 1);
@@ -81,7 +95,6 @@ int main (int argc, char *argv[])
   solver2.factor();
   solver2.solve(&x[0]);
 
-  cout << "getting solver 2 factors" << endl;
   row_ptr_L.resize(m);
   col_idx_L.resize(nnz);
   vals_L.resize(nnz);
@@ -91,10 +104,10 @@ int main (int argc, char *argv[])
   solver2.get_factors(row_ptr_L.data(), col_idx_L.data(), vals_L.data(),
                       row_ptr_U.data(), col_idx_U.data(), vals_U.data());
   cout << "L factor:" << endl;
-  print_csr_matrix(row_ptr_L.data(), col_idx_L.data(), vals_L.data(), m);
+  print_csr_matrix(row_ptr_L.data(), col_idx_L.data(), vals_L.data(), m, nnz);
 
   cout << "U factor:" << endl;
-  print_csr_matrix(row_ptr_U.data(), col_idx_U.data(), vals_U.data(), m);
+  print_csr_matrix(row_ptr_U.data(), col_idx_U.data(), vals_U.data(), m, nnz);
 
   cout << "solution:" << endl;
   for (int i = 0; i < m; ++i) {
@@ -111,10 +124,10 @@ int main (int argc, char *argv[])
   solver3.get_factors(row_ptr_L.data(), col_idx_L.data(), vals_L.data(),
                       row_ptr_U.data(), col_idx_U.data(), vals_U.data());
   cout << "L factor:" << endl;
-  print_csr_matrix(row_ptr_L.data(), col_idx_L.data(), vals_L.data(), m);
+  print_csr_matrix(row_ptr_L.data(), col_idx_L.data(), vals_L.data(), m, nnz);
 
   cout << "U factor:" << endl;
-  print_csr_matrix(row_ptr_U.data(), col_idx_U.data(), vals_U.data(), m);
+  print_csr_matrix(row_ptr_U.data(), col_idx_U.data(), vals_U.data(), m, nnz);
 
   cout << "solution:" << endl;
   for (int i = 0; i < m; ++i) {
@@ -130,10 +143,10 @@ int main (int argc, char *argv[])
   solver4.get_factors(row_ptr_L.data(), col_idx_L.data(), vals_L.data(),
                       row_ptr_U.data(), col_idx_U.data(), vals_U.data());
   cout << "L factor:" << endl;
-  print_csr_matrix(row_ptr_L.data(), col_idx_L.data(), vals_L.data(), m);
+  print_csr_matrix(row_ptr_L.data(), col_idx_L.data(), vals_L.data(), m, nnz);
 
   cout << "U factor:" << endl;
-  print_csr_matrix(row_ptr_U.data(), col_idx_U.data(), vals_U.data(), m);
+  print_csr_matrix(row_ptr_U.data(), col_idx_U.data(), vals_U.data(), m, nnz);
 
   cout << "solution:" << endl;
   for (int i = 0; i < m; ++i) {

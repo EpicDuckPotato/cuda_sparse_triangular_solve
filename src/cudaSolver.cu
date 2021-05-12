@@ -38,7 +38,7 @@ __global__ void kernelFindRoots_L(int *roots, char *depGraph) {
   if (row < cuConstSolverParams.m) {
     roots[row] = 1;
     for (int i = cuConstSolverParams.row_ptr[row];
-         cuConstSolverParams.col_idx[i] < row; ++i) {
+         cuConstSolverParams.col_idx[i] < row && i < cuConstSolverParams.row_ptr[row + 1]; ++i) {
       if (depGraph[i]) {
         // Dependency exists
         roots[row] = 0;
@@ -63,7 +63,7 @@ __global__ void kernelFindRootsInCandidates_L(int *roots, char *cRoot, char *dep
   if (cRoot[row] == 1) {
     roots[row] = 1;
     for (int i = cuConstSolverParams.row_ptr[row];
-         cuConstSolverParams.col_idx[i] < row; ++i) {
+         cuConstSolverParams.col_idx[i] < row && i < cuConstSolverParams.row_ptr[row + 1]; ++i) {
       if (depGraph[i]) {
         // Dependency exists
         roots[row] = 0;
@@ -135,7 +135,7 @@ __global__ void kernelMultiblock_L(int start, int *levelInd, int *levelPtr, doub
     // Compute element of solution corresponding to row
     int row = levelInd[idx];
     for (int i = cuConstSolverParams.row_ptr[row];
-         cuConstSolverParams.col_idx[i] < row; ++i) {
+         cuConstSolverParams.col_idx[i] < row && i < cuConstSolverParams.row_ptr[row + 1]; ++i) {
       b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
     }
   }
@@ -165,7 +165,7 @@ __global__ void kernelSingleblock_L(int start, int end, int *levelInd, int *leve
       // Compute element of solution corresponding to row
       int row = levelInd[idx];
       for (int i = cuConstSolverParams.row_ptr[row];
-           cuConstSolverParams.col_idx[i] < row; ++i) {
+           cuConstSolverParams.col_idx[i] < row && i < cuConstSolverParams.row_ptr[row + 1]; ++i) {
         b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
       }
     }
@@ -221,7 +221,6 @@ void CudaSolver::factor() {
   cusparseCreateMatDescr(&descr);
   cusparseSetMatIndexBase(descr, CUSPARSE_INDEX_BASE_ZERO);
   cusparseSetMatType(descr, CUSPARSE_MATRIX_TYPE_GENERAL);
-  cusparseSetMatDiagType(descr, CUSPARSE_DIAG_TYPE_NON_UNIT);
 
   int bufferSize;
   cusparseDcsrilu02_bufferSize(cs_handle, m, nnz, descr, device_vals, device_row_ptr,
@@ -254,6 +253,22 @@ void CudaSolver::get_factors(int *row_ptr_L, int *col_idx_L, double *vals_L,
   int *full_row_ptr = (int*)malloc((m + 1)*sizeof(int));
   cudaMemcpy(full_row_ptr, device_row_ptr, (m + 1)*sizeof(int), cudaMemcpyDeviceToHost);
 
+  printf("row_ptr: ");
+  for (int row = 0; row <= m; ++row) {
+    printf("%d ", full_row_ptr[row]);
+  }
+  printf("\n");
+  printf("col_idx: ");
+  for (int i = 0; i < nnz; ++i) {
+    printf("%d ", col_idx[i]);
+  }
+  printf("\n");
+  printf("vals: ");
+  for (int i = 0; i < nnz; ++i) {
+    printf("%f ", vals[i]);
+  }
+  printf("\n");
+
   int iL = 0;
   int iU = 0;
   int row = 0;
@@ -262,7 +277,7 @@ void CudaSolver::get_factors(int *row_ptr_L, int *col_idx_L, double *vals_L,
     // Lower
     row_ptr_L[row] = iL;
     int j = full_row_ptr[row];
-    for (; col_idx[j] < row; ++j) {
+    for (; col_idx[j] < row && j < full_row_ptr[row + 1]; ++j) {
       col_idx_L[iL] = col_idx[j];
       vals_L[iL] = vals[j];
       ++iL;
