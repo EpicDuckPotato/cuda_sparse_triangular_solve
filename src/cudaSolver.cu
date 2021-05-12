@@ -25,13 +25,13 @@ __constant__ GlobalConstants cuConstSolverParams;
 // LOWER TRIANGULAR KERNELS. ASSUME DIAGONAL CONTAINS ONES
 
 /*
- * kernelFindRoots_L: parallelizes over rows of the dependency
- * graph and indicates roots
+ * kernelFindRootsL: parallelizes over rows of the dependency
+ * graph and indicates roots (for lower triangular)
  * ARGUMENTS
  * roots: roots[i] is populated with 1 if row i is a root, and zero otherwise
  * depGraph: value array for the dependency graph
  */
-__global__ void kernelFindRoots_L(int *roots, char *depGraph) {
+__global__ void kernelFindRootsL(int *roots, char *depGraph) {
   int row = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (row < cuConstSolverParams.m) {
@@ -48,15 +48,15 @@ __global__ void kernelFindRoots_L(int *roots, char *depGraph) {
 }
 
 /*
- * kernelFindRootsInCandidates_L: parallelizes over rows of the dependency
- * graph and indicates roots, only looking at rows given by cRoot
+ * kernelFindRootsInCandidatesL: parallelizes over rows of the dependency
+ * graph and indicates roots, only looking at rows given by cRoot (for lower triangular)
  * ARGUMENTS
  * roots: roots[i] is populated with 1 if row i is a root, and zero otherwise
  * cRoot: 0-1 array indicating candidates
  * nCand: number of candidates
  * depGraph: value array for the dependency graph
  */
-__global__ void kernelFindRootsInCandidates_L(int *roots, char *cRoot, char *depGraph) {
+__global__ void kernelFindRootsInCandidatesL(int *roots, char *cRoot, char *depGraph) {
   int row = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (cRoot[row] == 1) {
@@ -75,7 +75,61 @@ __global__ void kernelFindRootsInCandidates_L(int *roots, char *cRoot, char *dep
 }
 
 /*
- * kernelAnalyze_L: populates levelInd, levelPtr, and cRoot.
+ * kernelFindRootsU: parallelizes over rows of the dependency
+ * graph and indicates roots (for upper triangular)
+ * ARGUMENTS
+ * roots: roots[i] is populated with 1 if row i is a root, and zero otherwise
+ * depGraph: value array for the dependency graph
+ */
+__global__ void kernelFindRootsU(int *roots, char *depGraph) {
+  int row = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (row < cuConstSolverParams.m) {
+    int rowStart = cuConstSolverParams.row_ptr[row]
+    int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
+
+    roots[row] = 1;
+    for (int i = rowEnd; cuConstSolverParams.col_idx[i] >= row && i >= rowStart; --i) {
+      if (depGraph[i]) {
+        // Dependency exists
+        roots[row] = 0;
+        break;
+      }
+    }
+  }
+}
+
+/*
+ * kernelFindRootsInCandidatesU: parallelizes over rows of the dependency
+ * graph and indicates roots, only looking at rows given by cRoot (for upper triangular)
+ * ARGUMENTS
+ * roots: roots[i] is populated with 1 if row i is a root, and zero otherwise
+ * cRoot: 0-1 array indicating candidates
+ * nCand: number of candidates
+ * depGraph: value array for the dependency graph
+ */
+__global__ void kernelFindRootsInCandidatesU(int *roots, char *cRoot, char *depGraph) {
+  int row = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (cRoot[row] == 1) {
+    int rowStart = cuConstSolverParams.row_ptr[row]
+    int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
+
+    roots[row] = 1;
+    for (int i = rowEnd; cuConstSolverParams.col_idx[i] >= row && i >= rowStart; --i) {
+      if (depGraph[i]) {
+        // Dependency exists
+        roots[row] = 0;
+        break;
+      }
+    }
+  } else {
+    roots[row] = 0;
+  }
+}
+
+/*
+ * kernelAnalyze: populates levelInd, levelPtr, and cRoot.
  * chainPtr determines the properties and number of kernels to be launched in the solve phase.
  * ARGUMENTS
  * cRoot: candidates are indicated with a 1. We set the rows of any current roots to 0
@@ -90,8 +144,8 @@ __global__ void kernelFindRootsInCandidates_L(int *roots, char *cRoot, char *dep
  * level: what level is this?
  * depGraph: value array for the dependency graph
  */
-__global__ void kernelAnalyze_L(char *cRoot, int *levelInd, int *levelPtr, int *nRoots,
-                                int *rootScan, int rowsDone, int level, char *depGraph) {
+__global__ void kernelAnalyze(char *cRoot, int *levelInd, int *levelPtr, int *nRoots,
+                              int *rootScan, int rowsDone, int level, char *depGraph) {
   int row = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (row < cuConstSolverParams.m &&
@@ -116,7 +170,7 @@ __global__ void kernelAnalyze_L(char *cRoot, int *levelInd, int *levelPtr, int *
 }
 
 /*
- * kernelMultiblock_L: processes a single level
+ * kernelMultiblockL: processes a single level for lower triangular
  * ARGUMENTS
  * start: start of chain
  * levelInd: sorted rows belonging to each level
@@ -124,7 +178,7 @@ __global__ void kernelAnalyze_L(char *cRoot, int *levelInd, int *levelPtr, int *
  * b: b matrix, populated with solution
  * val: L matrix values
  */
-__global__ void kernelMultiblock_L(int start, int *levelInd, int *levelPtr, double *b, double *val) {
+__global__ void kernelMultiblockL(int start, int *levelInd, int *levelPtr, double *b, double *val) {
   int startIdx = levelPtr[start];
   int endIdx = levelPtr[start + 1];
 
@@ -141,7 +195,7 @@ __global__ void kernelMultiblock_L(int start, int *levelInd, int *levelPtr, doub
 }
 
 /*
- * kernelSingleblock_L: processes a chain
+ * kernelSingleblockL: processes a chain for lower triangular
  * ARGUMENTS
  * start: start of chain
  * end: end of chain
@@ -150,7 +204,7 @@ __global__ void kernelMultiblock_L(int start, int *levelInd, int *levelPtr, doub
  * b: b matrix, populated with solution
  * val: L matrix values
  */
-__global__ void kernelSingleblock_L(int start, int end, int *levelInd, int *levelPtr, double *b, double *val) {
+__global__ void kernelSingleblockL(int start, int end, int *levelInd, int *levelPtr, double *b, double *val) {
   int startIdx;
   int endIdx;
 
@@ -167,6 +221,69 @@ __global__ void kernelSingleblock_L(int start, int end, int *levelInd, int *leve
            cuConstSolverParams.col_idx[i] < row && i < cuConstSolverParams.row_ptr[row + 1]; ++i) {
         b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
       }
+    }
+    __syncthreads();
+  }
+}
+
+/*
+ * kernelMultiblockU: processes a single level for upper triangular
+ * ARGUMENTS
+ * start: start of chain
+ * levelInd: sorted rows belonging to each level
+ * levelPtr: starting indices (in levelInd) of each level
+ * b: b matrix, populated with solution
+ * val: L matrix values
+ */
+__global__ void kernelMultiblockU(int start, int *levelInd, int *levelPtr, double *b, double *val) {
+  int startIdx = levelPtr[start];
+  int endIdx = levelPtr[start + 1];
+
+  int idx = startIdx + blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (idx < endIdx) {
+    // Compute element of solution corresponding to row
+    int row = levelInd[idx];
+    int rowStart = cuConstSolverParams.row_ptr[row]
+    int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
+
+    for (int i = rowEnd; cuConstSolverParams.col_idx[i] >= row && i >= rowStart; --i) {
+      b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
+    }
+    b[row] /= val[rowStart];
+  }
+}
+
+/*
+ * kernelSingleblockU: processes a chain for upper triangular
+ * ARGUMENTS
+ * start: start of chain
+ * end: end of chain
+ * levelInd: sorted rows belonging to each level
+ * levelPtr: starting indices (in levelInd) of each level
+ * b: b matrix, populated with solution
+ * val: L matrix values
+ */
+__global__ void kernelSingleblockU(int start, int end, int *levelInd, int *levelPtr, double *b, double *val) {
+  int startIdx;
+  int endIdx;
+
+  for (int i = start; i < end; ++i) {
+    startIdx = levelPtr[i];
+    endIdx = levelPtr[i + 1];
+
+    int idx = startIdx + blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < endIdx) {
+      // Compute element of solution corresponding to row
+      int row = levelInd[idx];
+      int rowStart = cuConstSolverParams.row_ptr[row]
+      int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
+
+      for (int i = rowEnd; cuConstSolverParams.col_idx[i] >= row && i >= rowStart; --i) {
+        b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
+      }
+      b[row] /= val[rowStart];
     }
     __syncthreads();
   }
@@ -289,14 +406,12 @@ void CudaSolver::get_factors(int *row_ptr_L, int *col_idx_L, double *vals_L,
 }
 
 void CudaSolver::solve(double *x) {
-  lowerTriangularSolve();
-
-  upperTriangularSolve();
-
+  triangularSolve(true);
+  triangularSolve(false);
   cudaMemcpy(x, device_b, m*sizeof(double), cudaMemcpyDeviceToHost);
 }
 
-void CudaSolver::lowerTriangularSolve() {
+void CudaSolver::triangularSolve(bool isLower) {
   // We'll need to access row_ptr and col_idx quite often without modifying them,
   // so store them as global constants
   GlobalConstants params;
@@ -346,7 +461,11 @@ void CudaSolver::lowerTriangularSolve() {
 
 
   // Get 0-1 array of roots
-  kernelFindRoots_L<<<gridDim, blockDim>>>(rRoot, depGraph);
+  if (isLower) {
+    kernelFindRootsL<<<gridDim, blockDim>>>(rRoot, depGraph);
+  } else {
+    kernelFindRootsU<<<gridDim, blockDim>>>(rRoot, depGraph);
+  }
   cudaDeviceSynchronize();
   thrust::inclusive_scan(thrust::device_pointer_cast(rRoot),
                          thrust::device_pointer_cast(rRoot) + m,
@@ -388,7 +507,11 @@ void CudaSolver::lowerTriangularSolve() {
     printf("Rows done: %d\n", rowsDone);
 
     // Get 0-1 array of roots
-    kernelFindRootsInCandidates_L<<<gridDim, blockDim>>>(rRoot, cRoot, depGraph);
+    if (isLower) {
+      kernelFindRootsInCandidatesL<<<gridDim, blockDim>>>(rRoot, cRoot, depGraph);
+    } else {
+      kernelFindRootsInCandidatesU<<<gridDim, blockDim>>>(rRoot, cRoot, depGraph);
+    }
     cudaDeviceSynchronize();
     thrust::inclusive_scan(thrust::device_pointer_cast(rRoot),
                            thrust::device_pointer_cast(rRoot) + m,
@@ -414,11 +537,19 @@ void CudaSolver::lowerTriangularSolve() {
 
     // Process a chain
     if (end - start > 1) {
-      kernelSingleblock_L<<<gridDimOneBlock, blockDim>>>(start, end, levelInd, levelPtr, device_b, device_vals);
+      if (isLower) {
+        kernelSingleblockL<<<gridDimOneBlock, blockDim>>>(start, end, levelInd, levelPtr, device_b, device_vals);
+      } else {
+        kernelSingleblockU<<<gridDimOneBlock, blockDim>>>(start, end, levelInd, levelPtr, device_b, device_vals);
+      }
     }
     // Process a single level
     else {
-      kernelMultiblock_L<<<gridDim, blockDim>>>(start, levelInd, levelPtr, device_b, device_vals);
+      if (isLower) {
+        kernelMultiblockL<<<gridDim, blockDim>>>(start, levelInd, levelPtr, device_b, device_vals);
+      } else {
+        kernelMultiblockU<<<gridDim, blockDim>>>(start, levelInd, levelPtr, device_b, device_vals);
+      }
     }
   }
 
@@ -430,8 +561,4 @@ void CudaSolver::lowerTriangularSolve() {
   cudaFree(cRoot);
   cudaFree(nRoots);
   cudaFree(depGraph);
-}
-
-void CudaSolver::upperTriangularSolve() {
-  // lol
 }
