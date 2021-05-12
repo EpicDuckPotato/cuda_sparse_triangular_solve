@@ -85,7 +85,7 @@ __global__ void kernelFindRootsU(int *roots, char *depGraph) {
   int row = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (row < cuConstSolverParams.m) {
-    int rowStart = cuConstSolverParams.row_ptr[row]
+    int rowStart = cuConstSolverParams.row_ptr[row];
     int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
 
     roots[row] = 1;
@@ -112,7 +112,7 @@ __global__ void kernelFindRootsInCandidatesU(int *roots, char *cRoot, char *depG
   int row = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (cRoot[row] == 1) {
-    int rowStart = cuConstSolverParams.row_ptr[row]
+    int rowStart = cuConstSolverParams.row_ptr[row];
     int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
 
     roots[row] = 1;
@@ -244,7 +244,7 @@ __global__ void kernelMultiblockU(int start, int *levelInd, int *levelPtr, doubl
   if (idx < endIdx) {
     // Compute element of solution corresponding to row
     int row = levelInd[idx];
-    int rowStart = cuConstSolverParams.row_ptr[row]
+    int rowStart = cuConstSolverParams.row_ptr[row];
     int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
 
     for (int i = rowEnd; cuConstSolverParams.col_idx[i] >= row && i >= rowStart; --i) {
@@ -277,7 +277,7 @@ __global__ void kernelSingleblockU(int start, int end, int *levelInd, int *level
     if (idx < endIdx) {
       // Compute element of solution corresponding to row
       int row = levelInd[idx];
-      int rowStart = cuConstSolverParams.row_ptr[row]
+      int rowStart = cuConstSolverParams.row_ptr[row];
       int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
 
       for (int i = rowEnd; cuConstSolverParams.col_idx[i] >= row && i >= rowStart; --i) {
@@ -480,7 +480,7 @@ void CudaSolver::triangularSolve(bool isLower) {
 
   // Upon exiting, chainIdx contains the number of chains
   while (true) {
-    kernelAnalyze_L<<<gridDim, blockDim>>>(cRoot, levelInd, levelPtr,
+    kernelAnalyze<<<gridDim, blockDim>>>(cRoot, levelInd, levelPtr,
                                          nRoots, rRoot, rowsDone, level, depGraph);
     cudaDeviceSynchronize();
 

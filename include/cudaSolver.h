@@ -59,15 +59,10 @@ class CudaSolver {
 
   private:
     /*
-     * lowerTriangularSolve: solves Lv = b and puts the result into b
+     * triangularSolve: solves Tx = b and puts the result into b
+     * isLower: if true, we perform a lower triangular solve, otherwise upper
      */
-    void lowerTriangularSolve();
-
-    /*
-     * upperTriangularSolve: should be called after lowerTriangularSolve.
-     * Solves Ux = v and puts the result into b.
-     */
-    void upperTriangularSolve();
+    void triangularSolve(bool isLower);
 
     int m;
     int nnz;
