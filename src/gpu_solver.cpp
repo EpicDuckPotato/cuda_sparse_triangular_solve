@@ -80,8 +80,8 @@ int main (int argc, char *argv[])
   }
   myfile.close();
 
-  // Get L factor and check solution against 
-  
+  // Get L factor and check solution against
+
   int *row_ptr_L = (int*)malloc(sizeof(int)*(m + 1));
   int *col_idx_L = (int*)malloc(sizeof(int)*nz);
   double *vals_L = (double*)malloc(sizeof(double)*nz);
@@ -103,7 +103,7 @@ int main (int argc, char *argv[])
   cs_utsolve(&Lt, b);
   auto stop = high_resolution_clock::now();
   auto duration = duration_cast<microseconds>(stop - start);
-  cout << "Csparse upper time: " << duration.count() << endl;
+  cout << "Csparse lower time: " << duration.count() << endl;
 
   start = high_resolution_clock::now();
   cs Ut;
@@ -117,8 +117,8 @@ int main (int argc, char *argv[])
   cs_ltsolve(&Ut, b);
   stop = high_resolution_clock::now();
   duration = duration_cast<microseconds>(stop - start);
-  cout << "Csparse lower time: " << duration.count() << endl;
-  
+  cout << "Csparse upper time: " << duration.count() << endl;
+
 
   myfile.open("gt_solution.txt");
   for (int row = 0; row < m; ++row) {

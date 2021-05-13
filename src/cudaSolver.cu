@@ -203,7 +203,7 @@ __global__ void kernelMultiblockL(int start, int *levelInd, int *levelPtr, doubl
     // Compute element of solution corresponding to row
     int row = levelInd[idx];
     for (int i = cuConstSolverParams.row_ptr[row];
-         cuConstSolverParams.col_idx[i] < row && i < cuConstSolverParams.row_ptr[row + 1]; ++i) {
+         i < cuConstSolverParams.row_ptr[row + 1] && cuConstSolverParams.col_idx[i] < row; ++i) {
       b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
     }
   }
@@ -233,7 +233,7 @@ __global__ void kernelSingleblockL(int start, int end, int *levelInd, int *level
       // Compute element of solution corresponding to row
       int row = levelInd[idx];
       for (int i = cuConstSolverParams.row_ptr[row];
-           cuConstSolverParams.col_idx[i] < row && i < cuConstSolverParams.row_ptr[row + 1]; ++i) {
+           i < cuConstSolverParams.row_ptr[row + 1] && cuConstSolverParams.col_idx[i] < row; ++i) {
         b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
       }
     }
@@ -263,7 +263,7 @@ __global__ void kernelMultiblockU(int start, int *levelInd, int *levelPtr, doubl
     int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
 
     int i = rowEnd;
-    for (; cuConstSolverParams.col_idx[i] > row && i >= rowStart; --i) {
+    for (; i >= rowStart && cuConstSolverParams.col_idx[i] > row; --i) {
       b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
     }
     b[row] /= val[i];
@@ -297,7 +297,7 @@ __global__ void kernelSingleblockU(int start, int end, int *levelInd, int *level
       int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
 
       int i = rowEnd;
-      for (; cuConstSolverParams.col_idx[i] > row && i >= rowStart; --i) {
+      for (; i >= rowStart && cuConstSolverParams.col_idx[i] > row; --i) {
         b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
       }
       b[row] /= val[i];
@@ -432,7 +432,9 @@ void CudaSolver::get_factors(int *row_ptr_L, int *col_idx_L, double *vals_L,
 }
 
 void CudaSolver::solve(double *x) {
+  printf("Lower:\n");
   triangularSolve(true);
+  printf("\nUpper:\n");
   triangularSolve(false);
   cudaMemcpy(x, device_b, m*sizeof(double), cudaMemcpyDeviceToHost);
 }
@@ -440,6 +442,9 @@ void CudaSolver::solve(double *x) {
 void CudaSolver::triangularSolve(bool isLower) {
   struct timeval t3, t4;
   gettimeofday(&t3, 0);
+
+  struct timeval t5, t6;
+  gettimeofday(&t5, 0);
 
   // We'll need to access row_ptr and col_idx quite often without modifying them,
   // so store them as global constants
@@ -458,17 +463,13 @@ void CudaSolver::triangularSolve(bool isLower) {
   int *levelPtr;
   cudaMalloc(&levelPtr, (m + 1)*sizeof(int)); // Worst-case scenario, each level contains a single row, and we need a pointer to the end, so m + 1
 
-  // We can have max THREADS_PER_BLOCK rows in a chain, so there can be max
-  // (m + THREADS_PER_BLOCK)/THREADS_PER_BLOCK chains (accounting for integer division)
+  // Unless m < THREADS_PER_BLOCK, we will have at least THREADS_PER_BLOCK rows in a chain,
+  // so there can be max (m + THREADS_PER_BLOCK)/THREADS_PER_BLOCK chains (accounting for integer division)
   int *chainPtr = (int*)malloc(sizeof(int)*(m + THREADS_PER_BLOCK)/THREADS_PER_BLOCK + 1);
 
   int *rRoot;
   cudaMalloc(&rRoot, m*sizeof(int)); // The maximum number of roots is the number of rows
   cudaMemset(rRoot, 0, m*sizeof(int));
-
-  int *wRoot;
-  cudaMalloc(&wRoot, m*sizeof(int));
-  cudaMemset(wRoot, 0, m*sizeof(int));
 
   char *cRoot;
   cudaMalloc(&cRoot, m*sizeof(char));
@@ -512,6 +513,9 @@ void CudaSolver::triangularSolve(bool isLower) {
 
   struct timeval t1, t2;
 
+  double av_analyze_time = 0;
+  double av_find_roots_time = 0;
+
   // Upon exiting, chainIdx contains the number of chains
   while (true) {
     gettimeofday(&t1, 0);
@@ -520,8 +524,7 @@ void CudaSolver::triangularSolve(bool isLower) {
     cudaDeviceSynchronize();
 
     gettimeofday(&t2, 0);
-    double time = 1000000.0*(t2.tv_sec-t1.tv_sec) + t2.tv_usec-t1.tv_usec;
-    printf("Time to analyze roots:  %f us \n", time);
+    av_analyze_time += 1000000.0*(t2.tv_sec-t1.tv_sec) + t2.tv_usec-t1.tv_usec;
 
     cudaMemcpy(&nRoots_host, nRoots, sizeof(int), cudaMemcpyDeviceToHost);
     if (nRoots_host == 0) {
@@ -543,8 +546,6 @@ void CudaSolver::triangularSolve(bool isLower) {
       rowsInChain = 0;
     }
 
-    //printf("Rows down: %d\n", rowsDone);
-
     gettimeofday(&t1, 0);
     // Get 0-1 array of roots
     if (isLower) {
@@ -555,16 +556,22 @@ void CudaSolver::triangularSolve(bool isLower) {
     cudaDeviceSynchronize();
 
     gettimeofday(&t2, 0);
-    time = 1000000.0*(t2.tv_sec-t1.tv_sec) + t2.tv_usec-t1.tv_usec;
-    printf("Time to find roots in candidates:  %f us \n", time);
+    av_find_roots_time += 1000000.0*(t2.tv_sec-t1.tv_sec) + t2.tv_usec-t1.tv_usec;
 
     thrust::inclusive_scan(thrust::device_pointer_cast(rRoot),
                            thrust::device_pointer_cast(rRoot) + m,
                            thrust::device_pointer_cast(rRoot));
   }
 
+  gettimeofday(&t6, 0);
+  double analysis_time = 1000000.0*(t6.tv_sec-t5.tv_sec) + t6.tv_usec-t5.tv_usec;
+
+  av_analyze_time /= level;
+  av_find_roots_time /= level;
 
   // SOLVE PHASE
+
+  gettimeofday(&t5, 0);
 
   int start;
   int end;
@@ -593,24 +600,22 @@ void CudaSolver::triangularSolve(bool isLower) {
     }
   }
 
-  printf("Freeing levelInd\n");
   cudaFree(levelInd);
-  printf("Freeing levelPtr\n");
   cudaFree(levelPtr);
-  printf("Freeing chainPtr\n");
   free(chainPtr);
-  printf("Freeing rRoot\n");
   cudaFree(rRoot);
-  printf("Freeing wRoot\n");
-  cudaFree(wRoot);
-  printf("Freeing cRoot\n");
   cudaFree(cRoot);
-  printf("Freeing nRoots\n");
   cudaFree(nRoots);
-  printf("Freeing depGraph\n");
   cudaFree(depGraph);
 
+  gettimeofday(&t6, 0);
+  double solve_time = 1000000.0*(t6.tv_sec-t5.tv_sec) + t6.tv_usec-t5.tv_usec;
+
   gettimeofday(&t4, 0);
-  time = 1000000.0*(t4.tv_sec-t3.tv_sec) + t4.tv_usec-t3.tv_usec;
+  double time = 1000000.0*(t4.tv_sec-t3.tv_sec) + t4.tv_usec-t3.tv_usec;
   printf("Total time:  %f us \n", time);
+  printf("Average analyze kernel time:  %f us \n", av_analyze_time);
+  printf("Average root-finding kernel time:  %f us \n", av_find_roots_time);
+  printf("Analysis time:  %f us \n", analysis_time);
+  printf("Solve time:  %f us \n", solve_time);
 }
