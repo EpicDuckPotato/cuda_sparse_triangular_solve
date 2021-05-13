@@ -455,9 +455,7 @@ void CudaSolver::triangularSolve(bool isLower) {
   int *levelPtr;
   cudaMalloc(&levelPtr, (m + 1)*sizeof(int)); // Worst-case scenario, each level contains a single row, and we need a pointer to the end, so m + 1
 
-  // Unless m < THREADS_PER_BLOCK, we will have at least THREADS_PER_BLOCK rows in a chain,
-  // so there can be max (m + THREADS_PER_BLOCK)/THREADS_PER_BLOCK chains (accounting for integer division)
-  int *chainPtr = (int*)malloc(sizeof(int)*(m + THREADS_PER_BLOCK)/THREADS_PER_BLOCK + 1);
+  int *chainPtr = (int*)malloc(sizeof(int)*(m + 1));
 
   int *rRoot;
   cudaMalloc(&rRoot, m*sizeof(int)); // The maximum number of roots is the number of rows
@@ -503,20 +501,11 @@ void CudaSolver::triangularSolve(bool isLower) {
   int chainIdx = 0;
   chainPtr[chainIdx] = level;
 
-  //struct timeval t1, t2;
-
   // Upon exiting, chainIdx contains the number of chains
   while (true) {
-    //gettimeofday(&t1, 0);
     kernelAnalyze<<<gridDim, blockDim>>>(cRoot, levelInd, levelPtr,
                                          nRoots, rRoot, rowsDone, level, depGraph);
     cudaDeviceSynchronize();
-
-    /*
-    gettimeofday(&t2, 0);
-    double time = (1000000.0*(t2.tv_sec-t1.tv_sec) + t2.tv_usec-t1.tv_usec)/1000.0;
-    printf("Time to analyze roots:  %3.1f ms \n", time);
-    */
 
     cudaMemcpy(&nRoots_host, nRoots, sizeof(int), cudaMemcpyDeviceToHost);
     if (nRoots_host == 0) {
@@ -527,16 +516,16 @@ void CudaSolver::triangularSolve(bool isLower) {
 
     ++level;
 
-    rowsInChain += nRoots_host;
-    rowsDone += nRoots_host;
-
-    if (rowsInChain > THREADS_PER_BLOCK) {
+    if (rowsInChain + nRoots_host > THREADS_PER_BLOCK) {
       // Adding this new level of roots to the current chain
       // would cause us to overflow the current chain. Add a new
       // chain starting at this level
       chainPtr[++chainIdx] = level;
       rowsInChain = 0;
     }
+
+    rowsInChain += nRoots_host;
+    rowsDone += nRoots_host;
 
     // Get 0-1 array of roots
     if (isLower) {
