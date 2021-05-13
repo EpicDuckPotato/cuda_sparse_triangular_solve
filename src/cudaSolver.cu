@@ -457,8 +457,8 @@ void CudaSolver::triangularSolve(bool isLower) {
   int *levelPtr;
   cudaMalloc(&levelPtr, (m + 1)*sizeof(int)); // Worst-case scenario, each level contains a single row, and we need a pointer to the end, so m + 1
 
-  // We can have max THREADS_PER_BLOCK rows in a chain, so there can be max
-  // (m + THREADS_PER_BLOCK)/THREADS_PER_BLOCK chains (accounting for integer division)
+  // Unless m < THREADS_PER_BLOCK, we will have at least THREADS_PER_BLOCK rows in a chain,
+  // so there can be max (m + THREADS_PER_BLOCK)/THREADS_PER_BLOCK chains (accounting for integer division)
   int *chainPtr = (int*)malloc(sizeof(int)*(m + THREADS_PER_BLOCK)/THREADS_PER_BLOCK + 1);
 
   int *rRoot;
@@ -529,16 +529,16 @@ void CudaSolver::triangularSolve(bool isLower) {
 
     ++level;
 
-    if (rowsInChain + nRoots_host > THREADS_PER_BLOCK) {
+    rowsInChain += nRoots_host;
+    rowsDone += nRoots_host;
+
+    if (rowsInChain > THREADS_PER_BLOCK) {
       // Adding this new level of roots to the current chain
       // would cause us to overflow the current chain. Add a new
       // chain starting at this level
       chainPtr[++chainIdx] = level;
       rowsInChain = 0;
     }
-
-    rowsInChain += nRoots_host;
-    rowsDone += nRoots_host;
 
     // Get 0-1 array of roots
     if (isLower) {
