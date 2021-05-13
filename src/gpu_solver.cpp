@@ -7,6 +7,7 @@
 #include <assert.h>
 #include "cudaSolver.h"
 #include "csparse.h"
+#include <chrono>
 
 extern "C" {
   #include "csparse.h"
@@ -14,6 +15,7 @@ extern "C" {
 }
 
 using namespace std;
+using namespace std::chrono;
 
 int main (int argc, char *argv[])
 {
@@ -78,7 +80,8 @@ int main (int argc, char *argv[])
   }
   myfile.close();
 
-  // Get L factor and check solution against csparse
+  // Get L factor and check solution against 
+  
   int *row_ptr_L = (int*)malloc(sizeof(int)*(m + 1));
   int *col_idx_L = (int*)malloc(sizeof(int)*nz);
   double *vals_L = (double*)malloc(sizeof(double)*nz);
@@ -88,6 +91,7 @@ int main (int argc, char *argv[])
   solver.get_factors(row_ptr_L, col_idx_L, vals_L,
                      row_ptr_U, col_idx_U, vals_U);
 
+  auto start = high_resolution_clock::now();
   cs Lt;
   Lt.nzmax = nz;
   Lt.m = m;
@@ -97,7 +101,11 @@ int main (int argc, char *argv[])
   Lt.x = vals_L;
   Lt.nz = nz;
   cs_utsolve(&Lt, b);
+  auto stop = high_resolution_clock::now();
+  auto duration = duration_cast<microseconds>(stop - start);
+  cout << "Csparse upper time: " << duration.count() << endl;
 
+  start = high_resolution_clock::now();
   cs Ut;
   Ut.nzmax = nz;
   Ut.m = m;
@@ -107,6 +115,10 @@ int main (int argc, char *argv[])
   Ut.x = vals_U;
   Ut.nz = nz;
   cs_ltsolve(&Ut, b);
+  stop = high_resolution_clock::now();
+  duration = duration_cast<microseconds>(stop - start);
+  cout << "Csparse lower time: " << duration.count() << endl;
+  
 
   myfile.open("gt_solution.txt");
   for (int row = 0; row < m; ++row) {

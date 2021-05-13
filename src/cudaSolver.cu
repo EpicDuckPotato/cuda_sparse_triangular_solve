@@ -438,6 +438,9 @@ void CudaSolver::solve(double *x) {
 }
 
 void CudaSolver::triangularSolve(bool isLower) {
+  struct timeval t3, t4;
+  gettimeofday(&t3, 0);
+
   // We'll need to access row_ptr and col_idx quite often without modifying them,
   // so store them as global constants
   GlobalConstants params;
@@ -529,7 +532,10 @@ void CudaSolver::triangularSolve(bool isLower) {
 
     ++level;
 
-    if (rowsInChain + nRoots_host > THREADS_PER_BLOCK) {
+    rowsInChain += nRoots_host;
+    rowsDone += nRoots_host;
+
+    if (rowsInChain > THREADS_PER_BLOCK) {
       // Adding this new level of roots to the current chain
       // would cause us to overflow the current chain. Add a new
       // chain starting at this level
@@ -537,10 +543,7 @@ void CudaSolver::triangularSolve(bool isLower) {
       rowsInChain = 0;
     }
 
-    rowsInChain += nRoots_host;
-    rowsDone += nRoots_host;
-
-    printf("Rows down: %d\n", rowsDone);
+    //printf("Rows down: %d\n", rowsDone);
 
     gettimeofday(&t1, 0);
     // Get 0-1 array of roots
@@ -606,4 +609,8 @@ void CudaSolver::triangularSolve(bool isLower) {
   cudaFree(nRoots);
   printf("Freeing depGraph\n");
   cudaFree(depGraph);
+
+  gettimeofday(&t4, 0);
+  time = 1000000.0*(t4.tv_sec-t3.tv_sec) + t4.tv_usec-t3.tv_usec;
+  printf("Total time:  %f us \n", time);
 }
