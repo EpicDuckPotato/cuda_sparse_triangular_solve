@@ -203,7 +203,7 @@ __global__ void kernelMultiblockL(int start, int *levelInd, int *levelPtr, doubl
     // Compute element of solution corresponding to row
     int row = levelInd[idx];
     for (int i = cuConstSolverParams.row_ptr[row];
-         cuConstSolverParams.col_idx[i] < row && i < cuConstSolverParams.row_ptr[row + 1]; ++i) {
+         i < cuConstSolverParams.row_ptr[row + 1] && cuConstSolverParams.col_idx[i] < row; ++i) {
       b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
     }
   }
@@ -233,7 +233,7 @@ __global__ void kernelSingleblockL(int start, int end, int *levelInd, int *level
       // Compute element of solution corresponding to row
       int row = levelInd[idx];
       for (int i = cuConstSolverParams.row_ptr[row];
-           cuConstSolverParams.col_idx[i] < row && i < cuConstSolverParams.row_ptr[row + 1]; ++i) {
+           i < cuConstSolverParams.row_ptr[row + 1] && cuConstSolverParams.col_idx[i] < row; ++i) {
         b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
       }
     }
@@ -263,7 +263,7 @@ __global__ void kernelMultiblockU(int start, int *levelInd, int *levelPtr, doubl
     int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
 
     int i = rowEnd;
-    for (; cuConstSolverParams.col_idx[i] > row && i >= rowStart; --i) {
+    for (; i >= rowStart && cuConstSolverParams.col_idx[i] > row; --i) {
       b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
     }
     b[row] /= val[i];
@@ -297,7 +297,7 @@ __global__ void kernelSingleblockU(int start, int end, int *levelInd, int *level
       int rowEnd = cuConstSolverParams.row_ptr[row + 1] - 1;
 
       int i = rowEnd;
-      for (; cuConstSolverParams.col_idx[i] > row && i >= rowStart; --i) {
+      for (; i >= rowStart && cuConstSolverParams.col_idx[i] > row; --i) {
         b[row] -= val[i] * b[cuConstSolverParams.col_idx[i]];
       }
       b[row] /= val[i];
@@ -432,7 +432,9 @@ void CudaSolver::get_factors(int *row_ptr_L, int *col_idx_L, double *vals_L,
 }
 
 void CudaSolver::solve(double *x) {
+  printf("lower\n");
   triangularSolve(true);
+  printf("upper\n");
   triangularSolve(false);
   cudaMemcpy(x, device_b, m*sizeof(double), cudaMemcpyDeviceToHost);
 }
@@ -462,10 +464,6 @@ void CudaSolver::triangularSolve(bool isLower) {
   int *rRoot;
   cudaMalloc(&rRoot, m*sizeof(int)); // The maximum number of roots is the number of rows
   cudaMemset(rRoot, 0, m*sizeof(int));
-
-  int *wRoot;
-  cudaMalloc(&wRoot, m*sizeof(int));
-  cudaMemset(wRoot, 0, m*sizeof(int));
 
   char *cRoot;
   cudaMalloc(&cRoot, m*sizeof(char));
@@ -542,8 +540,6 @@ void CudaSolver::triangularSolve(bool isLower) {
     rowsInChain += nRoots_host;
     rowsDone += nRoots_host;
 
-    printf("Rows down: %d\n", rowsDone);
-
     // Get 0-1 array of roots
     if (isLower) {
       kernelFindRootsInCandidatesL<<<gridDim, blockDim>>>(rRoot, cRoot, depGraph);
@@ -556,7 +552,6 @@ void CudaSolver::triangularSolve(bool isLower) {
                            thrust::device_pointer_cast(rRoot) + m,
                            thrust::device_pointer_cast(rRoot));
   }
-
 
   // SOLVE PHASE
 
@@ -595,8 +590,6 @@ void CudaSolver::triangularSolve(bool isLower) {
   free(chainPtr);
   printf("Freeing rRoot\n");
   cudaFree(rRoot);
-  printf("Freeing wRoot\n");
-  cudaFree(wRoot);
   printf("Freeing cRoot\n");
   cudaFree(cRoot);
   printf("Freeing nRoots\n");
