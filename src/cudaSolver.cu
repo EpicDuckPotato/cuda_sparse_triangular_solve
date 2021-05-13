@@ -432,9 +432,7 @@ void CudaSolver::get_factors(int *row_ptr_L, int *col_idx_L, double *vals_L,
 }
 
 void CudaSolver::solve(double *x) {
-  printf("lower\n");
   triangularSolve(true);
-  printf("upper\n");
   triangularSolve(false);
   cudaMemcpy(x, device_b, m*sizeof(double), cudaMemcpyDeviceToHost);
 }
@@ -586,18 +584,11 @@ void CudaSolver::triangularSolve(bool isLower) {
     }
   }
 
-  printf("Freeing levelInd\n");
   cudaFree(levelInd);
-  printf("Freeing levelPtr\n");
   cudaFree(levelPtr);
-  printf("Freeing chainPtr\n");
   free(chainPtr);
-  printf("Freeing rRoot\n");
   cudaFree(rRoot);
-  printf("Freeing cRoot\n");
   cudaFree(cRoot);
-  printf("Freeing nRoots\n");
   cudaFree(nRoots);
-  printf("Freeing depGraph\n");
   cudaFree(depGraph);
 }
